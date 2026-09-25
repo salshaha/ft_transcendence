@@ -1,6 +1,13 @@
 from flask import Flask, request
+from flask import Flask
+from login.login import user_
 
 app = Flask(__name__)
+
+app.register_blueprint(user_)
+
+if __name__ == "__main__":
+    app.run(debug=True)
 
 @app.route('/tasks', methods=['GET'])
 def show_tasks():
