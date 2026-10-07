@@ -1,7 +1,9 @@
 # users.py
 
-from flask import request, session
+
+from flask import request, session, Blueprint 
 from werkzeug.security import generate_password_hash, check_password_hash
+import app.services.user_service
 
 users_bp = Blueprint("users", __name__)
 
