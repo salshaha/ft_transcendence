@@ -1,8 +1,13 @@
+import os
+
 from flask import Flask, request
 from flask import Flask
-from login.login import user_
+from login.login import initialize_database, user_
 
 app = Flask(__name__)
+app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY", "dev-secret-key")
+app.permanent_session_lifetime = timedelta(minutes=5)
+app.config["SESSION_REFRESH_EACH_REQUEST"] = True
 
 app.register_blueprint(user_)
 
