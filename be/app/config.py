@@ -14,9 +14,10 @@ db_password = quote_plus(os.environ["POSTGRES_PASSWORD"])
 db_name = quote_plus(os.environ["POSTGRES_DB"])
 db_port = os.getenv("POSTGRES_PORT", "5432")
 
-SQLALCHEMY_DATABASE_URI = (
+SQLALCHEMY_DATABASE_URI = os.getenv(
+    "DATABASE_URL",
     f"postgresql+psycopg2://{db_user}:{db_password}"
-    f"@localhost:{db_port}/{db_name}"
+    f"@localhost:{db_port}/{db_name}",
 )
 
 SQLALCHEMY_TRACK_MODIFICATIONS = False

@@ -41,6 +41,9 @@ CREATE TABLE users (
     major VARCHAR(150),
     joined_year INTEGER,
 
+	student_id VARCHAR(50) UNIQUE,
+	domain VARCHAR(100),
+
     email VARCHAR(255) NOT NULL UNIQUE,
     password_hash TEXT,
     profile_picture TEXT,
