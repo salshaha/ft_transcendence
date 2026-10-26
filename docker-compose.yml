@@ -15,5 +15,23 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  frontend:
+    build:
+      context: ./fe
+      dockerfile: Dockerfile
+
+    container_name: team-platform-frontend
+    restart: unless-stopped
+
+    ports:
+      - "5173:5173"
+
+    volumes:
+      - ./fe:/app
+      - /app/node_modules
+
+    environment:
+      NODE_ENV: development
+
 volumes:
   postgres_data:
