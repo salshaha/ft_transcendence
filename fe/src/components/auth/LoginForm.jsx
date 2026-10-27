@@ -43,18 +43,20 @@ export default function LoginForm() {
         {!isLogin && <label>Full name<input name="name" value={values.name} onChange={handleChange} placeholder="Your name" required /></label>}
         <label>Email address<input name="email" type="email" value={values.email} onChange={handleChange} placeholder="you@example.com" required /></label>
         <label>Password<input name="password" type="password" value={values.password} onChange={handleChange} placeholder="••••••••" minLength="6" required /></label>
-        <fieldset className="role-picker">
-          <legend>I am joining as a...</legend>
-          <div className="role-options">
-            {["student", "instructor"].map((role) => (
-              <label className={`role-option ${values.role === role ? "selected" : ""}`} key={role}>
-                <input type="radio" name="role" value={role} checked={values.role === role} onChange={handleChange} />
-                <span className="role-icon">{role === "student" ? "✎" : "◆"}</span>
-                <span>{role[0].toUpperCase() + role.slice(1)}</span><span className="radio-dot" />
-              </label>
-            ))}
-          </div>
-        </fieldset>
+        {!isLogin && (
+          <fieldset className="role-picker">
+            <legend>I am joining as a...</legend>
+            <div className="role-options">
+              {["student", "instructor"].map((role) => (
+                <label className={`role-option ${values.role === role ? "selected" : ""}`} key={role}>
+                  <input type="radio" name="role" value={role} checked={values.role === role} onChange={handleChange} />
+                  <span className="role-icon">{role === "student" ? "✎" : "◆"}</span>
+                  <span>{role[0].toUpperCase() + role.slice(1)}</span><span className="radio-dot" />
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        )}
         {error && <p className="form-message error" role="alert">{error}</p>}
         {success && <p className="form-message success" role="status">{success}</p>}
         <button className="submit-button" type="submit" disabled={isLoading}>{isLoading ? "Please wait..." : isLogin ? "Continue to Pingora  →" : "Create my account  →"}</button>

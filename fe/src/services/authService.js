@@ -11,8 +11,8 @@ async function request(path, payload) {
   return data;
 }
 
-export function loginUser({ email, password, role }) {
-  return request("/login", { email, password, role });
+export function loginUser({ email, password }) {
+  return request("/login", { email, password });
 }
 
 export function registerUser({ name, email, password, role }) {
