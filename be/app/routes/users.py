@@ -1,26 +1,31 @@
-# users.py
+from flask import Blueprint, jsonify, request, session
+from sqlalchemy.exc import IntegrityError
+from werkzeug.security import check_password_hash, generate_password_hash
+from email_validator import EmailNotValidError, validate_email
 
-from flask import request, session
-from werkzeug.security import generate_password_hash, check_password_hash
+from app.extensions import db
+from app.models.user import User
 
 users_bp = Blueprint("users", __name__)
 
-@users_bp.route("/update_info", methods=['PUT'])
+
+@users_bp.route("/update_info", methods=["PUT"])
 def update_info():
-    user_id = session.get('user_id')
-    if user_id is None:
-        return "No user is logged in"
+	user_id = session.get("user_id")
+	if user_id is None:
+		return jsonify({"message": "No user is logged in"}), 401
 
-    phone = request.form.get('phone_number')
-    password = request.form.get("password")
-    email = request.form.get("email")
+	user = db.session.get(User, user_id)
+	if user is None:
+		session.clear()
+		return jsonify({"message": "User not found"}), 404
 
-    if phone is not None:
-        update_info_phone(user_id, phone)
+	data = request.get_json(silent=True) or request.form
+	password = data.get("password")
+	email = data.get("email")
 
-    if password is not None:
-        hashed_password = generate_password_hash(password)
-        update_info_password(user_id, hashed_password)
+	if password is not None:
+		user.password_hash = generate_password_hash(password)
 
 	if email is not None:
 		normalized_email = see_if_validate_email(email)
