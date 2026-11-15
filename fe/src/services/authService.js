@@ -4,6 +4,7 @@ async function request(path, payload) {
   const response = await fetch(`${API_URL}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    credentials: "include",
     body: JSON.stringify(payload),
   });
   const data = await response.json().catch(() => ({}));
@@ -12,9 +13,16 @@ async function request(path, payload) {
 }
 
 export function loginUser({ email, password, role }) {
-  return request("/login", { email, password, role });
+  return request("/api/login", { email, password, role });
 }
 
 export function registerUser({ name, email, password, role }) {
-  return request("/register", { name, email, password, role });
+  const [first_name, ...lastParts] = name.trim().split(/\s+/);
+  return request("/api/signup", {
+    first_name,
+    last_name: lastParts.join(" ") || first_name,
+    email,
+    password,
+    role,
+  });
 }

@@ -3,7 +3,8 @@ import { useAuth } from "../../hooks/useAuth";
 
 const initialValues = { name: "", email: "", password: "", role: "student" };
 
-export default function LoginForm() {
+export default function LoginForm({ onAuthenticated }) {
+
   const [mode, setMode] = useState("login");
   const [values, setValues] = useState(initialValues);
   const [success, setSuccess] = useState("");
@@ -24,7 +25,10 @@ export default function LoginForm() {
   async function handleSubmit(event) {
     event.preventDefault();
     const result = await submit(values, mode);
-    if (result) setSuccess(isLogin ? "You are signed in!" : "Your account is ready!");
+    if (result) {
+      setSuccess(isLogin ? "You are signed in!" : "Your account is ready!");
+      if (isLogin) onAuthenticated(result.user);
+    }
   }
 
   return (
