@@ -29,7 +29,7 @@ export default function InstructorDashboard({ onLogout }) {
   }, []);
 
   async function logout() {
-    await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/logout`, {
+    await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/auth/logout`, {
       method: "POST",
       credentials: "include",
     });

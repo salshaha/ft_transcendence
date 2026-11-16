@@ -1,21 +1,26 @@
-# __init__.py
-
 from flask import Flask
-from app.extensions import db
+from flask_cors import CORS
 from flask_migrate import Migrate
+
+from app.extensions import db
 
 
 def create_app():
     app = Flask(__name__)
-
-    # Load configuration
     app.config.from_object("app.config")
+
+    CORS(
+        app,
+        resources={
+            r"/api/*": {"origins": [app.config["FRONTEND_ORIGIN"]]},
+        },
+        supports_credentials=True,
+    )
+
     db.init_app(app)
     Migrate(app, db)
 
-    from app.models.user import User
-
-    # Register blueprints
+    from app.models.user import User  # noqa: F401
     from app.auth.routes import auth_bp
     from app.routes.instructor import instructor_bp
     from app.routes.student import student_bp
