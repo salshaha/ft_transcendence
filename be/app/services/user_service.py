@@ -1,33 +1,41 @@
-# user_service.py
+from sqlalchemy.exc import SQLAlchemyError
+from werkzeug.security import generate_password_hash
 
-import os
+from app.extensions import db
+from app.models.user import User
 
-from sqlalchemy import create_engine, text
+
+def _get_user(user_id):
+    user = db.session.get(User, user_id)
+    if user is None:
+        raise LookupError("User not found")
+    return user
 
 
-def _get_engine():
-    database_url = os.getenv("DATABASE_URL")
-    if not database_url:
-        raise RuntimeError("DATABASE_URL must be set")
-    return create_engine(database_url)
+def _commit():
+    try:
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        raise
+
 
 def update_info_phone(user_id, phone_number):
-    with _get_engine().begin() as connection:
-        connection.execute(
-            text("UPDATE users SET phone = :phone WHERE id = :user_id"),
-            {"phone": phone_number, "user_id": user_id},
-        )
+    raise ValueError(
+        "Phone information cannot be updated because the users table "
+        "does not contain a phone column"
+    )
+
 
 def update_info_email(user_id, email):
-    with _get_engine().begin() as connection:
-        connection.execute(
-            text("UPDATE users SET email = :email WHERE id = :user_id"),
-            {"email": email, "user_id": user_id},
-        )
+    user = _get_user(user_id)
+    user.email = email
+    _commit()
+    return user
+
 
 def update_info_password(user_id, password):
-    with _get_engine().begin() as connection:
-        connection.execute(
-            text("UPDATE users SET password = :password WHERE id = :user_id"),
-            {"password": password, "user_id": user_id},
-        )
+    user = _get_user(user_id)
+    user.password_hash = generate_password_hash(password)
+    _commit()
+    return user
