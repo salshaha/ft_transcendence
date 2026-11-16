@@ -1,42 +1,41 @@
-# user_service.py
+from sqlalchemy.exc import SQLAlchemyError
+from werkzeug.security import generate_password_hash
 
-import sqlalchemy
+from app.extensions import db
+from app.models.user import User
 
-# the sqlite3 connection must disappear and be replaced with sqlalchemy connection
-# since we decided from the beginning to use PostgreSQL instead of SQLite
+
+def _get_user(user_id):
+    user = db.session.get(User, user_id)
+    if user is None:
+        raise LookupError("User not found")
+    return user
+
+
+def _commit():
+    try:
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        raise
+
 
 def update_info_phone(user_id, phone_number):
-    conn = sqlite3.connect("users.db")
-    cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE users SET phone = ? WHERE id = ?",
-        (phone_number, user_id)
+    raise ValueError(
+        "Phone information cannot be updated because the users table "
+        "does not contain a phone column"
     )
-    conn.commit()
-    conn.close()
-
-
 
 
 def update_info_email(user_id, email):
-    conn = sqlite3.connect("users.db")
-    cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE users SET email = ? WHERE id = ?",
-        (email, user_id)
-    )
-    conn.commit()
-    conn.close()
-
-
+    user = _get_user(user_id)
+    user.email = email
+    _commit()
+    return user
 
 
 def update_info_password(user_id, password):
-    conn = sqlite3.connect("users.db")
-    cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE users SET password = ? WHERE id = ?",
-        (password, user_id)
-    )
-    conn.commit()
-    conn.close()
+    user = _get_user(user_id)
+    user.password_hash = generate_password_hash(password)
+    _commit()
+    return user
