@@ -32,10 +32,10 @@ export default function LoginForm({ onAuthenticated }) {
       setSuccess("Your account is ready!");
     }
   }
-
+Student - my courses backend end points
   return (
     <div className="form-shell">
-      <div className="mobile-brand"><span className="brand-mark">P</span> pingora</div>
+      <div className="mobile-brand"><span className="brand-mark">N</span> Team-Platform</div>
       <div className="form-heading">
         <p className="eyebrow">YOUR SPACE AWAITS</p>
         <h2>{isLogin ? "Welcome back." : "Create your account."}</h2>
@@ -69,7 +69,7 @@ export default function LoginForm({ onAuthenticated }) {
         )}
         {error && <p className="form-message error" role="alert">{error}</p>}
         {success && <p className="form-message success" role="status">{success}</p>}
-        <button className="submit-button" type="submit" disabled={isLoading}>{isLoading ? "Please wait..." : isLogin ? "Continue to Pingora  →" : "Create my account  →"}</button>
+        <button className="submit-button" type="submit" disabled={isLoading}>{isLoading ? "Please wait..." : isLogin ? "Continue to Team-Platform  →" : "Create my account  →"}</button>
       </form>
       <p className="legal">By continuing, you agree to our <a href="#terms">Terms</a> and <a href="#privacy">Privacy Policy</a>.</p>
     </div>

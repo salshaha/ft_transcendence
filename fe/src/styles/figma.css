@@ -1,0 +1,89 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap");
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    font-family: "Manrope", ui-sans-serif, system-ui, sans-serif;
+    color: #003c43;
+    background: #f5faf9;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    min-width: 320px;
+    min-height: 100vh;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  ::selection {
+    background: #77b0aa;
+    color: #003c43;
+  }
+}
+
+@layer utilities {
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
+  .dark .theme-page {
+    color: #d5ebe8;
+    background: #071d20;
+  }
+
+  .dark .theme-header {
+    border-color: rgb(119 176 170 / 15%);
+    background: rgb(7 29 32 / 90%);
+  }
+
+  .dark .theme-surface {
+    border-color: rgb(119 176 170 / 16%);
+    background: #0d292d;
+    box-shadow: 0 8px 30px rgb(0 0 0 / 15%);
+  }
+
+  .dark .theme-control {
+    border-color: rgb(119 176 170 / 20%);
+    color: #a8d6d1;
+    background: #123438;
+  }
+
+  .dark .theme-soft {
+    background: #14383c;
+  }
+
+  .dark .theme-icon {
+    color: #e3fef7;
+    background: #174247;
+  }
+
+  .dark [class*="text-[#003C43]"],
+  .dark [class*="text-[#18484d]"],
+  .dark [class*="text-[#183f43]"] {
+    color: #e3fef7;
+  }
+
+  .dark [class*="text-[#587376]"],
+  .dark [class*="text-[#6d898b]"],
+  .dark [class*="text-[#718b8d]"],
+  .dark [class*="text-[#7b9294]"] {
+    color: #91afac;
+  }
+
+  .dark [class*="divide-[#003C43]"] > :not(:last-child) {
+    border-color: rgb(119 176 170 / 14%);
+  }
+
+  .dark .theme-invert,
+  .dark aside [class*="text-[#003C43]"] {
+    color: #003c43;
+  }
+}
