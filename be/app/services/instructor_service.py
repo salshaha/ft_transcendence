@@ -140,6 +140,14 @@ def get_projects(instructor_id):
         {
             "id": project.id,
             "course": {"id": project.course.id, "name": project.course.name},
+            "title": project.title,
+            "description": project.description,
+            "deadline": project.deadline.isoformat() if project.deadline else None,
+            "requirements": {
+                "original_name": project.requirements_original_name,
+                "content_type": project.requirements_content_type,
+                "size": project.requirements_size,
+            } if project.requirements_file_key else None,
             "prd": project.prd,
             "min_members_per_team": project.min_members_per_team,
             "max_members_per_team": project.max_members_per_team,
