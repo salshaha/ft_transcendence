@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react"
 import {
+  addStudentSkill,
+  getAvailableSkills,
   getStudentCourses,
   getStudentDashboard,
   getStudentProfile,
   joinStudentTeam,
+  removeStudentSkill,
   updateStudentAccount,
+  updateStudentSkill,
 } from "../services/studentService"
 
 const iconPaths = {
@@ -299,7 +303,56 @@ function PageHeading({
   )
 }
 
-function ProfilePage({ profile }) {
+function ProfilePage({ profile, onRefreshProfile }) {
+  const [skillName, setSkillName] = useState("")
+  const [skillCategory, setSkillCategory] = useState("technical")
+  const [proficiency, setProficiency] = useState(3)
+  const [skillMessage, setSkillMessage] = useState("")
+  const [skillError, setSkillError] = useState("")
+  const [savingSkill, setSavingSkill] = useState(false)
+  const [removingSkillId, setRemovingSkillId] = useState(null)
+
+  const skills = Array.isArray(profile.skills) ? profile.skills : []
+
+  async function handleAddSkill(event) {
+    event.preventDefault()
+    setSkillMessage("")
+    setSkillError("")
+    if (!skillName.trim()) {
+      setSkillError("Enter a skill name.")
+      return
+    }
+    setSavingSkill(true)
+    try {
+      await addStudentSkill({
+        name: skillName.trim(),
+        category: skillCategory,
+        proficiencyLevel: proficiency,
+      })
+      setSkillName("")
+      setSkillMessage("Skill added.")
+      if (onRefreshProfile) await onRefreshProfile()
+    } catch (requestError) {
+      setSkillError(requestError.message)
+    } finally {
+      setSavingSkill(false)
+    }
+  }
+
+  async function handleRemoveSkill(skillId) {
+    setRemovingSkillId(skillId)
+    setSkillMessage("")
+    setSkillError("")
+    try {
+      await removeStudentSkill(skillId)
+      setSkillMessage("Skill removed.")
+      if (onRefreshProfile) await onRefreshProfile()
+    } catch (requestError) {
+      setSkillError(requestError.message)
+    } finally {
+      setRemovingSkillId(null)
+    }
+  }
   return (
     <div>
       <PageHeading
@@ -354,14 +407,75 @@ function ProfilePage({ profile }) {
                 Help classmates find you for the right projects.
               </p>
             </div>
-            <button disabled title="Skills management requires a backend API" className="flex shrink-0 cursor-not-allowed items-center gap-2 rounded-xl bg-[#6D5BD0] px-4 py-2.5 text-xs font-bold text-white opacity-60">
-              <span className="text-base leading-none">+</span>
-              Add Skill
+            <div />
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {skills.length === 0 && (
+              <p className="text-xs text-[#6d898b]">No skills added yet.</p>
+            )}
+            {skills.map((skill) => (
+              <span
+                key={skill.skill_id}
+                className="inline-flex items-center gap-2 rounded-full bg-[#E3FEF7] px-3 py-1.5 text-[10px] font-bold text-[#135D66]"
+              >
+                {skill.name} · {skill.proficiency_level}/5
+                <button
+                  type="button"
+                  onClick={() => handleRemoveSkill(skill.skill_id)}
+                  disabled={removingSkillId === skill.skill_id}
+                  className="text-[#135D66] transition hover:text-[#003C43] disabled:opacity-60"
+                  aria-label={`Remove ${skill.name}`}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+          <form onSubmit={handleAddSkill} className="mt-6 grid gap-3 sm:grid-cols-[1fr_120px_80px_auto]">
+            <input
+              value={skillName}
+              onChange={(event) => setSkillName(event.target.value)}
+              placeholder="Skill name"
+              className="theme-control rounded-xl border border-[#003C43]/10 bg-white px-4 py-2.5 text-sm text-[#003C43] outline-none transition focus:border-[#6D5BD0] focus:ring-4 focus:ring-[#6D5BD0]/10"
+            />
+            <select
+              value={skillCategory}
+              onChange={(event) => setSkillCategory(event.target.value)}
+              className="theme-control rounded-xl border border-[#003C43]/10 bg-white px-3 py-2.5 text-sm text-[#003C43] outline-none"
+            >
+              <option value="technical">Technical</option>
+              <option value="interpersonal">Interpersonal</option>
+              <option value="artistic">Artistic</option>
+              <option value="linguistic">Linguistic</option>
+              <option value="other">Other</option>
+            </select>
+            <select
+              value={proficiency}
+              onChange={(event) => setProficiency(Number(event.target.value))}
+              className="theme-control rounded-xl border border-[#003C43]/10 bg-white px-3 py-2.5 text-sm text-[#003C43] outline-none"
+            >
+              {[1, 2, 3, 4, 5].map((level) => (
+                <option key={level} value={level}>{level}</option>
+              ))}
+            </select>
+            <button
+              type="submit"
+              disabled={savingSkill}
+              className="rounded-xl bg-[#6D5BD0] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#5c49c5] disabled:cursor-wait disabled:opacity-60"
+            >
+              {savingSkill ? "Adding..." : "Add"}
             </button>
-          </div>
-          <div className="mt-6 rounded-xl bg-[#f0f7f6] p-4 text-xs text-[#6d898b]">
-            Skills are not available through the current backend API.
-          </div>
+          </form>
+          {skillError && (
+            <div className="mt-3 rounded-xl bg-[#fff0f0] px-4 py-3 text-[11px] font-semibold text-[#a94646]">
+              {skillError}
+            </div>
+          )}
+          {skillMessage && (
+            <div className="mt-3 rounded-xl bg-[#E3FEF7] px-4 py-3 text-[11px] font-semibold text-[#135D66]">
+              {skillMessage}
+            </div>
+          )}
         </section>
       </div>
     </div>
@@ -972,7 +1086,7 @@ export default function StudentDashboard({ onLogout }) {
                 </div>
               </>
             ) : active === "My Profile" ? (
-              profile ? <ProfilePage profile={profile} /> : pageError ? <p className="text-xs text-[#a94646]" role="alert">{pageError}</p> : <p className="text-xs text-[#6d898b]" role="status">Loading your profile...</p>
+              profile ? <ProfilePage profile={profile} onRefreshProfile={async () => { const data = await getStudentProfile(); setProfile(data.student) }} /> : pageError ? <p className="text-xs text-[#a94646]" role="alert">{pageError}</p> : <p className="text-xs text-[#6d898b]" role="status">Loading your profile...</p>
             ) : active === "My Courses" ? (
               coursePageData ? <CoursesPage courses={coursePageData} /> : pageError ? <p className="text-xs text-[#a94646]" role="alert">{pageError}</p> : <p className="text-xs text-[#6d898b]" role="status">Loading your courses...</p>
             ) : (

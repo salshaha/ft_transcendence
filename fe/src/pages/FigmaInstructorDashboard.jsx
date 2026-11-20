@@ -576,7 +576,7 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
                 <h1 className="text-xl font-bold text-[#003C43]">My courses</h1>
                 <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {courses.map((course) => (
-                    <article key={course.id} className="rounded-xl bg-[#f0f7f6] p-4">
+                    <article key={course.id} className="theme-surface rounded-xl bg-[#f0f7f6] p-4">
                       <h2 className="font-bold text-[#003C43]">{course.name}</h2>
                       <p className="mt-1 text-xs text-[#6d898b]">{course.code || "Course code unavailable"}</p>
                       <p className="mt-3 text-xs text-[#587376]">{course.student_count} enrolled students</p>
@@ -590,7 +590,7 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
                 <h1 className="text-xl font-bold text-[#003C43]">Students</h1>
                 <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {students.map((student) => (
-                    <article key={student.id} className="rounded-xl border border-[#003C43]/10 bg-white p-4 shadow-sm">
+                    <article key={student.id} className="theme-surface rounded-xl border border-[#003C43]/10 bg-white p-4 shadow-sm">
                       <h2 className="font-bold text-[#003C43]">{student.full_name}</h2>
                       <p className="mt-1 text-xs font-medium text-[#365c60]">{student.email}</p>
                     </article>
@@ -603,7 +603,7 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
                 <h1 className="text-xl font-bold text-[#003C43]">Projects</h1>
                 <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {projects.map((project) => (
-                    <article key={project.id} className="rounded-xl bg-[#f0f7f6] p-4">
+                    <article key={project.id} className="theme-surface rounded-xl bg-[#f0f7f6] p-4">
                       <h2 className="font-bold text-[#003C43]">{project.course.name}</h2>
                       <p className="mt-1 text-xs text-[#6d898b]">{project.team_count} teams · {project.min_members_per_team}–{project.max_members_per_team} members</p>
                       <p className="mt-3 line-clamp-3 text-xs text-[#587376]">{project.prd}</p>

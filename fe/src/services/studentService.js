@@ -25,3 +25,34 @@ export function updateStudentAccount({ email, currentPassword }) {
     },
   });
 }
+
+export function getAvailableSkills(search = "", category = "") {
+  const params = new URLSearchParams();
+  if (search) params.set("search", search);
+  if (category) params.set("category", category);
+  const query = params.toString();
+  return apiRequest(`/api/skills${query ? `?${query}` : ""}`);
+}
+
+export function addStudentSkill({ skillId, name, category, proficiencyLevel = 3 }) {
+  return apiRequest("/api/me/skills", {
+    method: "POST",
+    payload: {
+      skill_id: skillId,
+      name,
+      category,
+      proficiency_level: proficiencyLevel,
+    },
+  });
+}
+
+export function updateStudentSkill(skillId, proficiencyLevel) {
+  return apiRequest(`/api/me/skills/${skillId}`, {
+    method: "PUT",
+    payload: { proficiency_level: proficiencyLevel },
+  });
+}
+
+export function removeStudentSkill(skillId) {
+  return apiRequest(`/api/me/skills/${skillId}`, { method: "DELETE" });
+}

@@ -24,6 +24,15 @@ def get_authenticated_student():
 
 
 def serialize_profile(student):
+    skills = [
+        {
+            "skill_id": ss.skill_id,
+            "name": ss.skill.name,
+            "category": ss.skill.category,
+            "proficiency_level": ss.proficiency_level,
+        }
+        for ss in getattr(student, "skills", [])
+    ]
     return {
         "id": student.id,
         "student_id": student.student_id,
@@ -36,6 +45,7 @@ def serialize_profile(student):
         "domain": student.domain,
         "profile_picture": student.profile_picture,
         "gpa": float(student.gpa.gpa) if student.gpa else None,
+        "skills": skills,
         "greeting": f"Welcome, {student.first_name}!",
     }
 
