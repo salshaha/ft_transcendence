@@ -227,7 +227,7 @@ function Sidebar({
             }`}
           >
             <div className="theme-invert grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#77B0AA] text-xs font-bold text-[#003C43]">
-              {`${student.first_name[0]}${student.last_name[0]}`}
+              {`${(student.first_name || "?")[0]}${(student.last_name || "?")[0]}`}
             </div>
             <div className={`min-w-0 flex-1 ${collapsed ? "lg:hidden" : ""}`}>
               <div className="truncate text-sm font-semibold">{student.full_name}</div>
@@ -273,7 +273,7 @@ function CourseCard({ course, onOpen }) {
       </h3>
       <div className="mt-2 flex items-center gap-2 text-xs text-[#587376]">
         <Icon name="user" className="h-3.5 w-3.5" />
-        {course.instructor}
+        {course.instructor?.name || "Instructor"}
       </div>
     </article>
   )
@@ -677,10 +677,20 @@ export default function StudentDashboard({ onLogout }) {
     )
   }
 
-  const student = dashboard.student
-  const courses = dashboard.courses
-  const deadlines = dashboard.deadlines
-  const availableTeams = dashboard.available_teams
+  if (!dashboard) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-[#f5faf9] p-6 text-sm text-[#a94646]" role="alert">
+        Unable to load the student dashboard.
+      </main>
+    )
+  }
+
+  const student = dashboard?.student || {}
+  const courses = Array.isArray(dashboard?.courses) ? dashboard.courses : []
+  const deadlines = Array.isArray(dashboard?.deadlines) ? dashboard.deadlines : []
+  const availableTeams = Array.isArray(dashboard?.available_teams)
+    ? dashboard.available_teams
+    : []
 
   return (
     <div className={darkMode ? "dark" : ""}>
@@ -754,7 +764,7 @@ export default function StudentDashboard({ onLogout }) {
               <div className="hidden h-8 w-px bg-[#003C43]/10 sm:block" />
               <div className="hidden items-center gap-2.5 sm:flex">
                 <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#135D66] text-xs font-bold text-white">
-                  {`${student.first_name[0]}${student.last_name[0]}`}
+                  {`${(student.first_name || "?")[0]}${(student.last_name || "?")[0]}`}
                 </div>
                 <div className="hidden xl:block">
                   <div className="text-xs font-bold text-[#003C43]">

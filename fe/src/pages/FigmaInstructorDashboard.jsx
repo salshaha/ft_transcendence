@@ -590,9 +590,9 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
                 <h1 className="text-xl font-bold text-[#003C43]">Students</h1>
                 <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {students.map((student) => (
-                    <article key={student.id} className="rounded-xl bg-[#f0f7f6] p-4">
+                    <article key={student.id} className="rounded-xl border border-[#003C43]/10 bg-white p-4 shadow-sm">
                       <h2 className="font-bold text-[#003C43]">{student.full_name}</h2>
-                      <p className="mt-1 text-xs text-[#6d898b]">{student.email}</p>
+                      <p className="mt-1 text-xs font-medium text-[#365c60]">{student.email}</p>
                     </article>
                   ))}
                 </div>
