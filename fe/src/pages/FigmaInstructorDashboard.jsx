@@ -114,7 +114,6 @@ const navItems = [
   { label: "My courses", icon: "book" },
   { label: "Students", icon: "users" },
   { label: "Projects", icon: "file" },
-  { label: "Resources", icon: "calendar" },
   { label: "Settings", icon: "settings" },
 ]
 
