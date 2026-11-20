@@ -113,6 +113,27 @@ flask --app run.py db upgrade
 flask --app run.py db check
 ```
 
+Seed or repair demo data with:
+
+```bash
+cd be
+flask --app run.py seed-demo
+```
+
+The seeder is idempotent: it resets demo account passwords to `Password123!`,
+creates missing demo records, and does not duplicate existing records.
+
+For a completely clean database:
+
+```bash
+docker compose down -v
+docker compose up -d
+cd be
+flask --app run.py db upgrade
+flask --app run.py seed-demo
+flask --app run.py create-admin
+```
+
 ---
 
 ## 4. Features completed
