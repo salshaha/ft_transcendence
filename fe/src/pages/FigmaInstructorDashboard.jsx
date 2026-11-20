@@ -114,7 +114,7 @@ const navItems = [
   { label: "Overview", icon: "grid" },
   { label: "My courses", icon: "book" },
   { label: "Students", icon: "users" },
-  { label: "Resources", icon: "calendar" },
+  { label: "Projects", icon: "file" },
   { label: "Settings", icon: "settings" },
 ]
 
