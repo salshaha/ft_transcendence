@@ -406,10 +406,6 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <button disabled title="Course resource uploads are not available yet" className="flex w-fit cursor-not-allowed items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-xs font-bold text-white opacity-60">
-                    <Icon name="file" className="h-4 w-4" />
-                    Upload slides or lab
-                  </button>
                   <button disabled title="Project creation is not available yet" className="theme-invert flex w-fit cursor-not-allowed items-center gap-2 rounded-xl bg-[#E3FEF7] px-4 py-2.5 text-xs font-bold text-[#003C43] opacity-60">
                     Create new project <Icon name="arrow" className="h-4 w-4" />
                   </button>
