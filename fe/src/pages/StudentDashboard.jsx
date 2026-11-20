@@ -3,7 +3,7 @@ import {
   addStudentSkill,
   createStudentTeam,
   getAvailableSkills,
-  getStudentCourseProject,
+  getStudentCourseTeams,
   getStudentCourses,
   getStudentDashboard,
   getStudentProfile,
@@ -524,7 +524,7 @@ function CoursesPage({ courses, onViewProject }) {
                 <Icon name="file" className="h-4 w-4 text-[#6D5BD0]" />
               </div>
               <h3 className="mt-2 text-xs font-extrabold leading-5 text-[#31304c]">
-                Project details are not available yet.
+                Open the project brief and manage your team.
               </h3>
               <button onClick={() => onViewProject(course)} className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-[#135D66] px-3 py-2.5 text-[10px] font-bold text-white transition hover:bg-[#003C43]">
                 View project details
@@ -537,6 +537,214 @@ function CoursesPage({ courses, onViewProject }) {
           <p className="text-xs text-[#6d898b]">You are not enrolled in any courses yet.</p>
         )}
       </div>
+    </div>
+  )
+}
+
+function CourseProjectPage({
+  course,
+  data,
+  loading,
+  error,
+  message,
+  teamName,
+  creatingTeam,
+  joiningTeam,
+  onTeamNameChange,
+  onCreateTeam,
+  onJoinTeam,
+  onBack,
+}) {
+  const project = data?.project || null
+  const teams = Array.isArray(data?.teams) ? data.teams : []
+  const alreadyInTeam = teams.some((team) => team.is_member)
+
+  return (
+    <div>
+      <button
+        onClick={onBack}
+        className="mb-5 flex items-center gap-1 text-xs font-bold text-[#135D66] transition hover:text-[#003C43]"
+      >
+        <Icon name="chevron" className="h-3.5 w-3.5 rotate-180" />
+        Back to courses
+      </button>
+
+      <PageHeading
+        eyebrow={course?.name || "Course project"}
+        title={project?.title || "Project details"}
+        description="Review the project brief, create a team, or join one of the teams already working on it."
+      />
+
+      {loading ? (
+        <p className="text-xs text-[#6d898b]" role="status">Loading project details...</p>
+      ) : error ? (
+        <p className="rounded-xl bg-[#fff0f0] p-4 text-xs text-[#a94646]" role="alert">{error}</p>
+      ) : !project ? (
+        <p className="rounded-xl bg-white p-4 text-xs text-[#6d898b]">No project has been published for this course yet.</p>
+      ) : (
+        <>
+          <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.06)] sm:p-6">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6D5BD0]">
+                  Project brief
+                </div>
+                <p className="mt-3 max-w-3xl text-sm leading-6 text-[#587376]">
+                  {project.description || project.prd || "No description has been added for this project."}
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="theme-soft rounded-xl bg-[#f0f7f6] p-3">
+                  <div className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">
+                    <Icon name="clock" className="h-3 w-3" /> Deadline
+                  </div>
+                  <div className="mt-1 text-xs font-bold text-[#003C43]">
+                    {project.deadline ? new Date(project.deadline).toLocaleString() : "Not set"}
+                  </div>
+                </div>
+                <div className="theme-soft rounded-xl bg-[#f0f7f6] p-3">
+                  <div className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">
+                    <Icon name="users" className="h-3 w-3" /> Team size
+                  </div>
+                  <div className="mt-1 text-xs font-bold text-[#003C43]">
+                    {project.min_members_per_team}–{project.max_members_per_team} members
+                  </div>
+                </div>
+                <div className="theme-soft rounded-xl bg-[#f0f7f6] p-3">
+                  <div className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">
+                    <Icon name="file" className="h-3 w-3" /> Requirements
+                  </div>
+                  <div className="mt-1 text-xs font-bold text-[#003C43]">
+                    {project.requirements ? "Available" : "Not uploaded"}
+                  </div>
+                </div>
+              </div>
+            </div>
+            {project.requirements && (
+              <button
+                onClick={() => openStudentProjectRequirements(project.id)}
+                className="mt-5 flex w-fit items-center justify-center gap-2 rounded-lg bg-[#E3FEF7] px-4 py-3 text-xs font-bold text-[#135D66] transition hover:bg-[#77B0AA] hover:text-[#003C43]"
+              >
+                <Icon name="file" className="h-4 w-4" />
+                View requirements PDF
+              </button>
+            )}
+          </section>
+
+          <section className="theme-surface mt-6 rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.06)] sm:p-6">
+            <h2 className="text-lg font-bold text-[#003C43]">Create a team</h2>
+            {alreadyInTeam ? (
+              <p className="mt-3 rounded-xl bg-[#f0f7f6] p-4 text-xs text-[#135D66]">
+                You are already in a team for this project.
+              </p>
+            ) : (
+              <form onSubmit={onCreateTeam} className="mt-3 flex flex-col gap-3 sm:flex-row">
+                <input
+                  value={teamName}
+                  onChange={(event) => onTeamNameChange(event.target.value)}
+                  placeholder="Team name"
+                  aria-label="Team name"
+                  className="theme-control flex-1 rounded-xl border border-[#003C43]/10 bg-white px-4 py-2.5 text-sm text-[#003C43] outline-none transition focus:border-[#6D5BD0] focus:ring-4 focus:ring-[#6D5BD0]/10"
+                />
+                <button
+                  type="submit"
+                  disabled={creatingTeam}
+                  className="rounded-xl bg-[#6D5BD0] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#5c49c5] disabled:cursor-wait disabled:opacity-60"
+                >
+                  {creatingTeam ? "Creating..." : "Create team"}
+                </button>
+              </form>
+            )}
+          </section>
+
+          <section className="mt-6">
+            <div className="mb-4 flex items-end justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-bold text-[#003C43]">Teams in this course</h2>
+                <p className="mt-1 text-xs text-[#6d898b]">
+                  Every team created for this course project
+                </p>
+              </div>
+              <span className="rounded-full bg-[#E3FEF7] px-2.5 py-1 text-[10px] font-bold text-[#135D66]">
+                {teams.length} {teams.length === 1 ? "team" : "teams"}
+              </span>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+              {teams.map((team) => (
+                <article
+                  key={team.id}
+                  className={`theme-surface rounded-2xl border bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.06)] ${
+                    team.is_member ? "border-[#77B0AA]" : "border-[#003C43]/8"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="truncate text-sm font-extrabold text-[#003C43]">{team.name}</h3>
+                      <div className="mt-1 text-[10px] text-[#6d898b]">
+                        Led by {team.members.find((member) => member.id === team.leader_id)?.name || "TBA"}
+                      </div>
+                    </div>
+                    <span className="shrink-0 rounded-md bg-[#f5f3ff] px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-[#6D5BD0]">
+                      {team.status || "forming"}
+                    </span>
+                  </div>
+                  <div className="mt-4 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <div className="flex -space-x-1.5">
+                        {team.members.map((member) => (
+                          <span
+                            key={member.id}
+                            className="theme-invert grid h-6 w-6 place-items-center rounded-full border-2 border-white bg-[#77B0AA] text-[8px] font-extrabold text-[#003C43]"
+                          >
+                            {member.name.split(" ").map((part) => part[0]).join("").slice(0, 2)}
+                          </span>
+                        ))}
+                      </div>
+                      <span className="text-[10px] font-semibold text-[#718b8d]">
+                        {team.current_member_count}/{team.max_members}
+                      </span>
+                    </div>
+                    <button
+                      disabled={
+                        joiningTeam === team.id ||
+                        team.is_member ||
+                        alreadyInTeam ||
+                        team.available_spots <= 0
+                      }
+                      onClick={() => onJoinTeam(team.id)}
+                      className="rounded-lg bg-[#E3FEF7] px-3 py-2 text-[10px] font-bold text-[#135D66] transition hover:bg-[#77B0AA] hover:text-[#003C43] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {joiningTeam === team.id
+                        ? "Joining..."
+                        : team.is_member
+                          ? "Joined"
+                          : alreadyInTeam
+                            ? "Already in team"
+                            : team.available_spots <= 0
+                              ? "Full"
+                              : "Join team"}
+                    </button>
+                  </div>
+                  {team.is_member && (
+                    <div className="mt-3 text-[10px] font-bold text-[#135D66]">Your team</div>
+                  )}
+                </article>
+              ))}
+              {teams.length === 0 && (
+                <p className="text-xs text-[#6d898b]">
+                  No teams have been created for this course yet. Be the first to create one.
+                </p>
+              )}
+            </div>
+          </section>
+
+          {message && (
+            <p className="mt-6 rounded-xl bg-[#E3FEF7] p-4 text-xs text-[#135D66]" role="status">
+              {message}
+            </p>
+          )}
+        </>
+      )}
     </div>
   )
 }
@@ -778,20 +986,35 @@ export default function StudentDashboard({ onLogout }) {
     }
   }
 
-  async function handleViewProject(course) {
-    setSelectedCourse(course)
-    setProjectData(null)
-    setProjectError("")
-    setProjectMessage("")
+  async function loadCourseProject(courseId) {
     setProjectLoading(true)
+    setProjectError("")
     try {
-      const data = await getStudentCourseProject(course.id)
+      const data = await getStudentCourseTeams(courseId)
       setProjectData(data)
     } catch (requestError) {
       setProjectError(requestError.message)
     } finally {
       setProjectLoading(false)
     }
+  }
+
+  function handleViewProject(course) {
+    setSelectedCourse(course)
+    setProjectData(null)
+    setProjectError("")
+    setProjectMessage("")
+    setTeamName("")
+    setActive("Course Project")
+    loadCourseProject(course.id)
+  }
+
+  function handleBackToCourses() {
+    setSelectedCourse(null)
+    setProjectData(null)
+    setProjectError("")
+    setProjectMessage("")
+    setActive("My Courses")
   }
 
   async function handleCreateTeam(event) {
@@ -801,12 +1024,14 @@ export default function StudentDashboard({ onLogout }) {
     setProjectMessage("")
     setCreatingTeam(true)
     try {
-      const team = await createStudentTeam({
+      const result = await createStudentTeam({
         projectId: projectData.project.id,
         name: teamName.trim() || `Team ${Date.now()}`,
       })
+      const createdTeam = result.team || result
       setTeamName("")
-      setProjectMessage(`Team "${team.name}" created successfully.`)
+      setProjectMessage(`Team "${createdTeam.name}" created successfully.`)
+      await loadCourseProject(selectedCourse.id)
       const updatedDashboard = await getStudentDashboard()
       setDashboard(updatedDashboard)
     } catch (requestError) {
@@ -823,10 +1048,9 @@ export default function StudentDashboard({ onLogout }) {
     try {
       await joinStudentTeam(teamId)
       setProjectMessage("You joined the team.")
+      await loadCourseProject(selectedCourse.id)
       const updatedDashboard = await getStudentDashboard()
       setDashboard(updatedDashboard)
-      const data = await getStudentCourseProject(selectedCourse.id)
-      setProjectData(data)
     } catch (requestError) {
       setProjectError(requestError.message)
     } finally {
@@ -876,7 +1100,7 @@ export default function StudentDashboard({ onLogout }) {
     <div className={darkMode ? "dark" : ""}>
       <div className="theme-page min-h-screen bg-[#f5faf9] text-[#183f43] transition-colors duration-300">
         <Sidebar
-          active={active}
+          active={active === "Course Project" ? "My Courses" : active}
           onSelect={setActive}
           open={mobileOpen}
           onClose={() => setMobileOpen(false)}
@@ -903,7 +1127,7 @@ export default function StudentDashboard({ onLogout }) {
                 Student portal
               </div>
               <div className="truncate text-lg font-bold text-[#003C43]">
-                {active}
+                {active === "Course Project" ? "Project details" : active}
               </div>
             </div>
             <div className="ml-auto flex items-center gap-2 sm:gap-3">
@@ -954,10 +1178,6 @@ export default function StudentDashboard({ onLogout }) {
                     {student.major || student.domain || "Student"}
                   </div>
                 </div>
-                <Icon
-                  name="chevron"
-                  className="h-3.5 w-3.5 rotate-90 text-[#77B0AA]"
-                />
               </div>
             </div>
           </header>
@@ -988,8 +1208,8 @@ export default function StudentDashboard({ onLogout }) {
                         {deadlines.length} upcoming deadlines.
                       </p>
                     </div>
-                    <button onClick={() => setActive("My Courses")} className="theme-invert flex w-fit items-center gap-2 rounded-xl bg-[#E3FEF7] px-4 py-2.5 text-xs font-bold text-[#003C43] shadow-lg shadow-black/10 transition hover:bg-white">
-                      View my courses{" "}
+                    <button onClick={() => setActive("My Profile")} className="theme-invert flex w-fit items-center gap-2 rounded-xl bg-[#E3FEF7] px-4 py-2.5 text-xs font-bold text-[#003C43] shadow-lg shadow-black/10 transition hover:bg-white">
+                      View my profile{" "}
                       <Icon name="arrow" className="h-4 w-4" />
                     </button>
                   </div>
@@ -1155,132 +1375,29 @@ export default function StudentDashboard({ onLogout }) {
               profile ? <ProfilePage profile={profile} onRefreshProfile={async () => { const data = await getStudentProfile(); setProfile(data.student) }} /> : pageError ? <p className="text-xs text-[#a94646]" role="alert">{pageError}</p> : <p className="text-xs text-[#6d898b]" role="status">Loading your profile...</p>
             ) : active === "My Courses" ? (
               coursePageData ? <CoursesPage courses={coursePageData} onViewProject={handleViewProject} /> : pageError ? <p className="text-xs text-[#a94646]" role="alert">{pageError}</p> : <p className="text-xs text-[#6d898b]" role="status">Loading your courses...</p>
+            ) : active === "Course Project" ? (
+              selectedCourse ? (
+                <CourseProjectPage
+                  course={selectedCourse}
+                  data={projectData}
+                  loading={projectLoading}
+                  error={projectError}
+                  message={projectMessage}
+                  teamName={teamName}
+                  creatingTeam={creatingTeam}
+                  joiningTeam={joiningTeam}
+                  onTeamNameChange={setTeamName}
+                  onCreateTeam={handleCreateTeam}
+                  onJoinTeam={handleJoinProjectTeam}
+                  onBack={handleBackToCourses}
+                />
+              ) : (
+                <p className="text-xs text-[#6d898b]" role="status">Select a course to view its project.</p>
+              )
             ) : (
               <SettingsPage student={student} onSaveAccount={handleSaveAccount} />
             )}
           </div>
-          {selectedCourse && (
-            <div className="fixed inset-0 z-[60] grid place-items-center bg-[#003C43]/40 p-4 backdrop-blur-sm">
-              <section className="theme-surface w-full max-w-2xl rounded-2xl bg-white p-6 shadow-[0_20px_60px_rgba(0,60,67,0.25)] sm:p-7">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6D5BD0]">
-                      {selectedCourse.name}
-                    </p>
-                    <h2 className="mt-2 text-xl font-extrabold text-[#003C43]">
-                      {projectLoading ? "Loading project..." : projectData?.project?.title || "Project"}
-                    </h2>
-                  </div>
-                  <button
-                    onClick={() => setSelectedCourse(null)}
-                    className="rounded-lg p-2 text-[#77B0AA] transition hover:bg-[#E3FEF7] hover:text-[#003C43]"
-                    aria-label="Close project details"
-                  >
-                    <Icon name="close" />
-                  </button>
-                </div>
-
-                {projectError && (
-                  <p className="mt-4 rounded-xl bg-[#fff0f0] p-4 text-xs text-[#a94646]" role="alert">
-                    {projectError}
-                  </p>
-                )}
-
-                {projectData?.project && (
-                  <div className="mt-5 space-y-4">
-                    <p className="text-sm leading-6 text-[#587376]">
-                      {projectData.project.description || projectData.project.prd}
-                    </p>
-                    <div className="grid gap-3 sm:grid-cols-3">
-                      <div className="theme-soft rounded-xl bg-[#f0f7f6] p-3">
-                        <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">Deadline</div>
-                        <div className="mt-1 text-xs font-bold text-[#003C43]">
-                          {projectData.project.deadline
-                            ? new Date(projectData.project.deadline).toLocaleString()
-                            : "Not set"}
-                        </div>
-                      </div>
-                      <div className="theme-soft rounded-xl bg-[#f0f7f6] p-3">
-                        <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">Team size</div>
-                        <div className="mt-1 text-xs font-bold text-[#003C43]">
-                          {projectData.project.min_members_per_team}–{projectData.project.max_members_per_team} members
-                        </div>
-                      </div>
-                      <div className="theme-soft rounded-xl bg-[#f0f7f6] p-3">
-                        <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">Requirements</div>
-                        <div className="mt-1 text-xs font-bold text-[#003C43]">
-                          {projectData.project.requirements ? "Available" : "Not uploaded"}
-                        </div>
-                      </div>
-                    </div>
-
-                    {projectData.project.requirements && (
-                      <button
-                        onClick={() => openStudentProjectRequirements(projectData.project.id)}
-                        className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#E3FEF7] px-4 py-3 text-xs font-bold text-[#135D66] transition hover:bg-[#77B0AA] hover:text-[#003C43]"
-                      >
-                        <Icon name="file" className="h-4 w-4" />
-                        View requirements PDF
-                      </button>
-                    )}
-
-                    <form onSubmit={handleCreateTeam} className="rounded-xl border border-[#003C43]/8 p-4">
-                      <h3 className="text-sm font-bold text-[#003C43]">Create a team</h3>
-                      <div className="mt-3 flex flex-col gap-3 sm:flex-row">
-                        <input
-                          value={teamName}
-                          onChange={(event) => setTeamName(event.target.value)}
-                          placeholder="Team name"
-                          className="theme-control flex-1 rounded-xl border border-[#003C43]/10 bg-white px-4 py-2.5 text-sm text-[#003C43] outline-none transition focus:border-[#6D5BD0] focus:ring-4 focus:ring-[#6D5BD0]/10"
-                        />
-                        <button
-                          type="submit"
-                          disabled={creatingTeam}
-                          className="rounded-xl bg-[#6D5BD0] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#5c49c5] disabled:cursor-wait disabled:opacity-60"
-                        >
-                          {creatingTeam ? "Creating..." : "Create team"}
-                        </button>
-                      </div>
-                    </form>
-
-                    <div>
-                      <h3 className="text-sm font-bold text-[#003C43]">Available teams</h3>
-                      <div className="mt-3 space-y-2">
-                        {availableTeams
-                          .filter((team) => team.course?.id === selectedCourse.id)
-                          .map((team) => (
-                            <article key={team.id} className="theme-soft flex items-center justify-between gap-3 rounded-xl bg-[#f0f7f6] p-3">
-                              <div className="min-w-0">
-                                <div className="truncate text-sm font-bold text-[#003C43]">{team.name}</div>
-                                <div className="mt-1 text-[10px] text-[#6d898b]">
-                                  {team.current_member_count}/{team.max_members} members · {team.available_spots} spots left
-                                </div>
-                              </div>
-                              <button
-                                disabled={joiningTeam === team.id || team.available_spots <= 0}
-                                onClick={() => handleJoinProjectTeam(team.id)}
-                                className="rounded-lg bg-[#E3FEF7] px-3 py-2 text-[10px] font-bold text-[#135D66] transition hover:bg-[#77B0AA] hover:text-[#003C43] disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                {joiningTeam === team.id ? "Joining..." : "Join"}
-                              </button>
-                            </article>
-                          ))}
-                        {availableTeams.filter((team) => team.course?.id === selectedCourse.id).length === 0 && (
-                          <p className="text-xs text-[#6d898b]">No available teams were found for this course.</p>
-                        )}
-                      </div>
-                    </div>
-
-                    {projectMessage && (
-                      <p className="rounded-xl bg-[#E3FEF7] p-4 text-xs text-[#135D66]" role="status">
-                        {projectMessage}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </section>
-            </div>
-          )}
         </main>
       </div>
     </div>

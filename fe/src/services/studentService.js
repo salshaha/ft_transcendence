@@ -20,6 +20,10 @@ export function getStudentCourseProject(courseId) {
   return apiRequest(`/api/student/courses/${courseId}/project`);
 }
 
+export function getStudentCourseTeams(courseId) {
+  return apiRequest(`/api/student/courses/${courseId}/teams`);
+}
+
 export function createStudentTeam({ projectId, name }) {
   return apiRequest("/api/student/teams", {
     method: "POST",
