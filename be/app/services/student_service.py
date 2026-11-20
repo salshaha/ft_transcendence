@@ -298,6 +298,53 @@ def get_course_project(student_id, course_id):
     }
 
 
+def get_course_teams(student_id, course_id):
+    data = get_course_project(student_id, course_id)
+    if data is None:
+        return None
+
+    max_members = data["project"]["max_members_per_team"]
+    teams = (
+        Team.query.options(
+            selectinload(Team.members).joinedload(TeamMember.student)
+        )
+        .filter(Team.project_id == data["project"]["id"])
+        .order_by(Team.name.asc(), Team.id.asc())
+        .all()
+    )
+
+    data["teams"] = [
+        {
+            "id": team.id,
+            "name": team.name,
+            "status": team.status,
+            "leader_id": team.leader_id,
+            "max_members": max_members,
+            "current_member_count": len(team.members),
+            "available_spots": max(0, max_members - len(team.members)),
+            "is_member": any(
+                member.student_id == student_id for member in team.members
+            ),
+            "members": [
+                {
+                    "id": member.student.id,
+                    "student_id": member.student.student_id,
+                    "name": (
+                        f"{member.student.first_name} "
+                        f"{member.student.last_name}"
+                    ),
+                    "joined_at": (
+                        member.joined_at.isoformat() if member.joined_at else None
+                    ),
+                }
+                for member in team.members
+            ],
+        }
+        for team in teams
+    ]
+    return data
+
+
 def create_team(student_id, data):
     project_id = data.get("project_id")
     if project_id is None:
@@ -330,6 +377,8 @@ def create_team(student_id, data):
         name = f"Team {student_id}"
     if len(name) > 150:
         raise ValueError("Team name must be 150 characters or fewer")
+    if Team.query.filter_by(project_id=project.id, name=name).first():
+        raise ValueError("A team with this name already exists in this project")
 
     team = Team(
         project_id=project.id,

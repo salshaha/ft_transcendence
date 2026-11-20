@@ -16,6 +16,26 @@ export function joinStudentTeam(teamId) {
   return apiRequest(`/api/student/teams/${teamId}/join`, { method: "POST" });
 }
 
+export function getStudentCourseProject(courseId) {
+  return apiRequest(`/api/student/courses/${courseId}/project`);
+}
+
+export function getStudentCourseTeams(courseId) {
+  return apiRequest(`/api/student/courses/${courseId}/teams`);
+}
+
+export function createStudentTeam({ projectId, name }) {
+  return apiRequest("/api/student/teams", {
+    method: "POST",
+    payload: { project_id: projectId, name },
+  });
+}
+
+export function openStudentProjectRequirements(projectId) {
+  const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "");
+  window.open(`${API_URL}/api/student/projects/${projectId}/requirements`, "_blank", "noopener,noreferrer");
+}
+
 export function updateStudentAccount({ email, currentPassword }) {
   return apiRequest("/api/update_info", {
     method: "PUT",

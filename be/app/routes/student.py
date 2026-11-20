@@ -9,6 +9,7 @@ from app.services.student_service import (
     get_authenticated_student,
     get_available_teams,
     get_course_project,
+    get_course_teams,
     get_courses,
     get_dashboard,
     get_deadlines,
@@ -74,6 +75,20 @@ def course_project(course_id):
         return jsonify(data), 200
     except SQLAlchemyError:
         return _database_error("Unable to retrieve project")
+
+
+@student_bp.route("/courses/<int:course_id>/teams", methods=["GET"])
+def course_teams(course_id):
+    student, response, status = _student_or_response()
+    if response:
+        return response, status
+    try:
+        data = get_course_teams(student.id, course_id)
+        if data is None:
+            return jsonify({"message": "Course or project not found"}), 404
+        return jsonify(data), 200
+    except SQLAlchemyError:
+        return _database_error("Unable to retrieve course teams")
 
 
 @student_bp.route("/deadlines", methods=["GET"])
