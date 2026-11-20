@@ -141,6 +141,19 @@ def create_instructor(email, password, first_name, last_name, force):
     )
 
 
+@click.command("seed-demo")
+@with_appcontext
+def seed_demo():
+    """Seed or repair the demo users, courses, projects, teams, and tasks."""
+    try:
+        from seed_demo import seed_demo_data
+
+        seed_demo_data()
+    except Exception as exc:  # pragma: no cover - CLI error reporting
+        raise click.ClickException(str(exc)) from exc
+
+
 def register_cli(app):
     app.cli.add_command(create_admin)
     app.cli.add_command(create_instructor)
+    app.cli.add_command(seed_demo)
