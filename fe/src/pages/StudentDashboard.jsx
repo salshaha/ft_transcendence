@@ -4,7 +4,7 @@ import {
   getStudentDashboard,
   getStudentProfile,
   joinStudentTeam,
-  updateStudentEmail,
+  updateStudentAccount,
 } from "../services/studentService"
 
 const iconPaths = {
@@ -321,7 +321,9 @@ function ProfilePage({ profile }) {
               {profile.major || "Major not provided"}
             </p>
             <span className="mt-3 rounded-full bg-[#E3FEF7] px-3 py-1.5 text-[10px] font-bold text-[#135D66]">
-              GPA unavailable
+              {profile.gpa === null || profile.gpa === undefined
+                ? "GPA not available"
+                : `GPA ${Number(profile.gpa).toFixed(2)}`}
             </span>
           </div>
           <div className="mt-6 space-y-4 border-t border-[#003C43]/8 pt-6">
@@ -422,8 +424,9 @@ function CoursesPage({ courses }) {
   )
 }
 
-function SettingsPage({ student, onSaveEmail }) {
+function SettingsPage({ student, onSaveAccount }) {
   const [email, setEmail] = useState(student.email)
+  const [currentPassword, setCurrentPassword] = useState("")
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
@@ -435,10 +438,15 @@ function SettingsPage({ student, onSaveEmail }) {
       setError("Enter a valid email address.")
       return
     }
+    if (!currentPassword) {
+      setError("Enter your current password to save changes.")
+      return
+    }
     setError("")
     setSaving(true)
     try {
-      await onSaveEmail(email)
+      await onSaveAccount({ email, currentPassword })
+      setCurrentPassword("")
       setMessage("Your personal information has been updated.")
     } catch (requestError) {
       setError(requestError.message)
@@ -503,6 +511,27 @@ function SettingsPage({ student, onSaveEmail }) {
                   setMessage("")
                   setError("")
                 }}
+                className="theme-control mt-2 w-full rounded-xl border border-[#003C43]/10 bg-white px-4 py-3 text-sm text-[#003C43] outline-none transition focus:border-[#6D5BD0] focus:ring-4 focus:ring-[#6D5BD0]/10"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="current-password"
+                className="text-[10px] font-bold text-[#587376]"
+              >
+                Current password
+              </label>
+              <input
+                id="current-password"
+                type="password"
+                value={currentPassword}
+                onChange={(event) => {
+                  setCurrentPassword(event.target.value)
+                  setMessage("")
+                  setError("")
+                }}
+                autoComplete="current-password"
+                placeholder="Required to change account details"
                 className="theme-control mt-2 w-full rounded-xl border border-[#003C43]/10 bg-white px-4 py-3 text-sm text-[#003C43] outline-none transition focus:border-[#6D5BD0] focus:ring-4 focus:ring-[#6D5BD0]/10"
               />
             </div>
@@ -625,8 +654,8 @@ export default function StudentDashboard({ onLogout }) {
     }
   }
 
-  async function handleSaveEmail(email) {
-    await updateStudentEmail(email)
+  async function handleSaveAccount({ email, currentPassword }) {
+    await updateStudentAccount({ email, currentPassword })
     const updatedProfile = { ...dashboard.student, email }
     setDashboard((current) => ({ ...current, student: updatedProfile }))
     setProfile(updatedProfile)
@@ -937,7 +966,7 @@ export default function StudentDashboard({ onLogout }) {
             ) : active === "My Courses" ? (
               coursePageData ? <CoursesPage courses={coursePageData} /> : pageError ? <p className="text-xs text-[#a94646]" role="alert">{pageError}</p> : <p className="text-xs text-[#6d898b]" role="status">Loading your courses...</p>
             ) : (
-              <SettingsPage student={student} onSaveEmail={handleSaveEmail} />
+              <SettingsPage student={student} onSaveAccount={handleSaveAccount} />
             )}
           </div>
         </main>

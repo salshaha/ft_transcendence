@@ -14,23 +14,24 @@ The authenticated user returned by login selects the dashboard: `student` render
 | Student profile | `GET /api/student/profile` | Real profile fields; no GPA or skills are returned. |
 | Student courses | `GET /api/student/courses` | Enrolled course and instructor data. |
 | Join a team | `POST /api/student/teams/<id>/join` | Uses the existing membership validation and refreshes the dashboard after success. |
-| Change student email | `PUT /api/update_info` | Updates the account email using the existing endpoint. Phone is not shown because the schema has no phone field. |
+| Change student email | `PUT /api/update_info` | Updates the account email after the current password is entered. Phone is not shown because the schema has no phone field. |
+| Restore a signed-in session after refresh | `GET /api/auth/session` | Called on app load to restore the authenticated user and CSRF token. |
+| CSRF protection | `GET /api/auth/csrf` | Every state-changing request sends the returned token in `X-CSRF-Token`; the API client bootstraps and retries it automatically. |
 
 Empty lists and unsupported capabilities are shown explicitly. Figma sample names, courses, team memberships, dates, grades, and success states are not used as application data. The student settings page does not claim that a password-reset email was sent, and unsupported actions are disabled.
 
 ## Backend functionality still needed
 
-No backend, database schema, or migration changes were made for this frontend phase.
+The foundational backend phase added migrations, task authorization, CSRF protection, admin-provisioned instructor accounts, and a local file-storage abstraction. See `docs/foundations.md`.
 
 | Capability | Current gap | Suggested follow-up |
 | --- | --- | --- |
-| Restore a signed-in session after refresh | The browser only retains the authenticated user in React state; there is no endpoint to retrieve the current session user. | Add `GET /api/auth/session` using the existing session cookie and user role. Load it before rendering protected UI. |
 | Course slides and labs | There is no course-resource table or upload/list API. | Add a course-resource model and migration with course, title, type, storage key, uploader, and timestamps; add instructor upload and student/instructor list/download endpoints. Store file contents in an approved file store, not directly in frontend code. |
 | Create instructor projects | The schema supports one project per course, but there is no project creation endpoint. | Add instructor-authorized project creation and retrieval endpoints using the existing `projects` model and enforce the existing one-project-per-course and team-size constraints. |
 | Student project details and requirements | Student course/dashboard responses do not include associated project requirements or teams. | Add course-scoped project detail access for enrolled students, reusing the existing `projects`, `teams`, and membership relationships. |
 | Create a team | Students can list and join teams, but there is no team-creation endpoint. | Add an enrollment- and project-scoped team creation endpoint; create its initial membership transactionally and enforce the existing team-size rules. |
 | Student skills | `skills` and `student_skills` exist in the schema, but there are no read/write endpoints. | Add authenticated profile skill list, add, and remove endpoints that reuse those tables and validate proficiency values. |
-| GPA and individual project grading/feedback | There is no GPA source, submission table, or individual evaluation table/API. Team feedback alone does not represent individual grades. | Confirm the authoritative GPA source and grading workflow first. Then add suitable evaluation records and migrations, plus instructor read/write endpoints. |
+| GPA and individual project grading/feedback | `student_gpa` now stores an optional GPA and the student profile returns it, but there is no GPA-management endpoint, submission table, or individual evaluation table/API. Team feedback alone does not represent individual grades. | Confirm the authoritative GPA source and grading workflow first. Then add suitable evaluation records and APIs, plus instructor read/write endpoints. |
 | Password reset | There is no reset-token workflow or outbound email configuration. | Add expiring, single-use reset tokens stored as hashes, request/confirmation endpoints, and configured email delivery. |
 | Notifications | There is no notification table or API. | Add recipient-scoped notification storage, read state, and list/mark-read endpoints when notification events are defined. |
 | Classmate profiles and course materials | Course API responses do not include classmates or resources. | Extend or add enrollment-scoped endpoints after the resource API and profile visibility rules are defined. |

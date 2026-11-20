@@ -1,5 +1,11 @@
 import { apiRequest } from "./apiClient";
 
+export function getSession() {
+  return apiRequest("/api/auth/session", {
+    errorMessage: "Unable to restore your session.",
+  });
+}
+
 export function loginUser({ email, password }) {
   return apiRequest("/api/auth/login", {
     method: "POST",
@@ -7,7 +13,7 @@ export function loginUser({ email, password }) {
   });
 }
 
-export function registerUser({ first_name, last_name, student_id, email, password, role }) {
+export function registerUser({ first_name, last_name, student_id, email, password }) {
   return apiRequest("/api/auth/register", {
     method: "POST",
     payload: {
@@ -16,7 +22,7 @@ export function registerUser({ first_name, last_name, student_id, email, passwor
       student_id,
       email,
       password,
-      role,
+      role: "student",
     },
   });
 }

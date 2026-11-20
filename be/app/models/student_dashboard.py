@@ -3,6 +3,9 @@ from app.extensions import db
 
 class CourseEnrollment(db.Model):
     __tablename__ = "course_enrollments"
+    __table_args__ = (
+        db.Index("idx_course_enrollments_course", "course_id"),
+    )
 
     student_id = db.Column(
         db.BigInteger, db.ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
@@ -22,6 +25,13 @@ class CourseEnrollment(db.Model):
 
 class Course(db.Model):
     __tablename__ = "courses"
+    __table_args__ = (
+        db.CheckConstraint(
+            "semester IN ('fall', 'spring', 'summer')",
+            name="courses_semester_check",
+        ),
+        db.Index("idx_courses_instructor", "instructor_id"),
+    )
 
     id = db.Column(db.BigInteger, primary_key=True)
     instructor_id = db.Column(
@@ -48,6 +58,15 @@ class Course(db.Model):
 
 class Project(db.Model):
     __tablename__ = "projects"
+    __table_args__ = (
+        db.CheckConstraint(
+            "min_members_per_team >= 1", name="chk_project_min_members"
+        ),
+        db.CheckConstraint(
+            "max_members_per_team >= min_members_per_team",
+            name="chk_project_max_members",
+        ),
+    )
 
     id = db.Column(db.BigInteger, primary_key=True)
     course_id = db.Column(
@@ -56,9 +75,17 @@ class Project(db.Model):
         nullable=False,
         unique=True,
     )
+    title = db.Column(db.String(255))
+    description = db.Column(db.Text)
+    deadline = db.Column(db.DateTime(timezone=True))
     min_members_per_team = db.Column(db.Integer, nullable=False)
     max_members_per_team = db.Column(db.Integer, nullable=False)
-    prd = db.Column(db.Text, nullable=False)
+    prd = db.Column(db.Text, nullable=False, server_default="")
+    requirements_file_key = db.Column(db.Text)
+    requirements_original_name = db.Column(db.String(255))
+    requirements_content_type = db.Column(db.String(255))
+    requirements_size = db.Column(db.BigInteger)
+    requirements_sha256 = db.Column(db.String(64))
     created_at = db.Column(
         db.DateTime(timezone=True),
         nullable=False,
@@ -71,12 +98,21 @@ class Project(db.Model):
 
 class Team(db.Model):
     __tablename__ = "teams"
+    __table_args__ = (
+        db.UniqueConstraint("project_id", "name", name="uq_teams_project_name"),
+        db.UniqueConstraint("id", "project_id", name="uq_teams_id_project"),
+        db.Index("idx_teams_project", "project_id"),
+    )
 
     id = db.Column(db.BigInteger, primary_key=True)
     project_id = db.Column(
         db.BigInteger, db.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
     name = db.Column(db.String(150), nullable=False)
+    leader_id = db.Column(
+        db.BigInteger, db.ForeignKey("users.id", ondelete="SET NULL")
+    )
+    status = db.Column(db.String(20), nullable=False, server_default="forming")
     created_at = db.Column(
         db.DateTime(timezone=True),
         nullable=False,
@@ -93,6 +129,7 @@ class Team(db.Model):
 
 class TeamMember(db.Model):
     __tablename__ = "team_members"
+    __table_args__ = (db.Index("idx_team_members_student", "student_id"),)
 
     team_id = db.Column(
         db.BigInteger, db.ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
@@ -112,6 +149,15 @@ class TeamMember(db.Model):
 
 class Task(db.Model):
     __tablename__ = "tasks"
+    __table_args__ = (
+        db.CheckConstraint(
+            "status IN ('todo', 'in_progress', 'review', 'done')",
+            name="tasks_status_check",
+        ),
+        db.Index("idx_tasks_team", "team_id"),
+        db.Index("idx_tasks_assignee", "assignee_id"),
+        db.Index("idx_tasks_created_by", "created_by"),
+    )
 
     id = db.Column(db.BigInteger, primary_key=True)
     team_id = db.Column(
@@ -132,6 +178,7 @@ class Task(db.Model):
         db.DateTime(timezone=True),
         nullable=False,
         server_default=db.func.current_timestamp(),
+        onupdate=db.func.current_timestamp(),
     )
     title = db.Column(db.String(255), nullable=False)
     due_date = db.Column(db.DateTime(timezone=True))

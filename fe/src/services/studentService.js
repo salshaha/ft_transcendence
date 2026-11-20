@@ -16,9 +16,12 @@ export function joinStudentTeam(teamId) {
   return apiRequest(`/api/student/teams/${teamId}/join`, { method: "POST" });
 }
 
-export function updateStudentEmail(email) {
+export function updateStudentAccount({ email, currentPassword }) {
   return apiRequest("/api/update_info", {
     method: "PUT",
-    payload: { email },
+    payload: {
+      email,
+      current_password: currentPassword,
+    },
   });
 }
