@@ -32,7 +32,7 @@ export default function LoginForm({ onAuthenticated }) {
       setSuccess("Your account is ready!");
     }
   }
-Student - my courses backend end points
+
   return (
     <div className="form-shell">
       <div className="mobile-brand"><span className="brand-mark">N</span> Team-Platform</div>
