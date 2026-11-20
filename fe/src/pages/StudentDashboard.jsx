@@ -888,10 +888,6 @@ export default function StudentDashboard({ onLogout }) {
                     {student.major || student.domain || "Student"}
                   </div>
                 </div>
-                <Icon
-                  name="chevron"
-                  className="h-3.5 w-3.5 rotate-90 text-[#77B0AA]"
-                />
               </div>
             </div>
           </header>
@@ -922,8 +918,8 @@ export default function StudentDashboard({ onLogout }) {
                         {deadlines.length} upcoming deadlines.
                       </p>
                     </div>
-                    <button onClick={() => setActive("My Courses")} className="theme-invert flex w-fit items-center gap-2 rounded-xl bg-[#E3FEF7] px-4 py-2.5 text-xs font-bold text-[#003C43] shadow-lg shadow-black/10 transition hover:bg-white">
-                      View my courses{" "}
+                    <button onClick={() => setActive("My Profile")} className="theme-invert flex w-fit items-center gap-2 rounded-xl bg-[#E3FEF7] px-4 py-2.5 text-xs font-bold text-[#003C43] shadow-lg shadow-black/10 transition hover:bg-white">
+                      View my profile{" "}
                       <Icon name="arrow" className="h-4 w-4" />
                     </button>
                   </div>
