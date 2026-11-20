@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react"
 import {
   addStudentSkill,
+  createStudentTeam,
   getAvailableSkills,
+  getStudentCourseProject,
   getStudentCourses,
   getStudentDashboard,
   getStudentProfile,
   joinStudentTeam,
+  openStudentProjectRequirements,
   removeStudentSkill,
   updateStudentAccount,
   updateStudentSkill,
@@ -482,7 +485,7 @@ function ProfilePage({ profile, onRefreshProfile }) {
   )
 }
 
-function CoursesPage({ courses }) {
+function CoursesPage({ courses, onViewProject }) {
   return (
     <div>
       <PageHeading
@@ -523,8 +526,8 @@ function CoursesPage({ courses }) {
               <h3 className="mt-2 text-xs font-extrabold leading-5 text-[#31304c]">
                 Project details are not available yet.
               </h3>
-              <button disabled title="Project details API is not available" className="mt-4 flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-lg bg-[#135D66] px-3 py-2.5 text-[10px] font-bold text-white opacity-60">
-                Project details unavailable
+              <button onClick={() => onViewProject(course)} className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-[#135D66] px-3 py-2.5 text-[10px] font-bold text-white transition hover:bg-[#003C43]">
+                View project details
                 <Icon name="arrow" className="h-3.5 w-3.5" />
               </button>
             </div>
@@ -706,6 +709,13 @@ export default function StudentDashboard({ onLogout }) {
   const [pageError, setPageError] = useState("")
   const [joiningTeam, setJoiningTeam] = useState(null)
   const [joinMessage, setJoinMessage] = useState("")
+  const [selectedCourse, setSelectedCourse] = useState(null)
+  const [projectData, setProjectData] = useState(null)
+  const [projectLoading, setProjectLoading] = useState(false)
+  const [projectError, setProjectError] = useState("")
+  const [teamName, setTeamName] = useState("")
+  const [creatingTeam, setCreatingTeam] = useState(false)
+  const [projectMessage, setProjectMessage] = useState("")
 
   useEffect(() => {
     let activeRequest = true
@@ -763,6 +773,62 @@ export default function StudentDashboard({ onLogout }) {
       setDashboard(updatedDashboard)
     } catch (requestError) {
       setPageError(`You joined the team, but the dashboard could not refresh: ${requestError.message}`)
+    } finally {
+      setJoiningTeam(null)
+    }
+  }
+
+  async function handleViewProject(course) {
+    setSelectedCourse(course)
+    setProjectData(null)
+    setProjectError("")
+    setProjectMessage("")
+    setProjectLoading(true)
+    try {
+      const data = await getStudentCourseProject(course.id)
+      setProjectData(data)
+    } catch (requestError) {
+      setProjectError(requestError.message)
+    } finally {
+      setProjectLoading(false)
+    }
+  }
+
+  async function handleCreateTeam(event) {
+    event.preventDefault()
+    if (!projectData?.project) return
+    setProjectError("")
+    setProjectMessage("")
+    setCreatingTeam(true)
+    try {
+      const team = await createStudentTeam({
+        projectId: projectData.project.id,
+        name: teamName.trim() || `Team ${Date.now()}`,
+      })
+      setTeamName("")
+      setProjectMessage(`Team "${team.name}" created successfully.`)
+      const updatedDashboard = await getStudentDashboard()
+      setDashboard(updatedDashboard)
+    } catch (requestError) {
+      setProjectError(requestError.message)
+    } finally {
+      setCreatingTeam(false)
+    }
+  }
+
+  async function handleJoinProjectTeam(teamId) {
+    setJoiningTeam(teamId)
+    setProjectError("")
+    setProjectMessage("")
+    try {
+      await joinStudentTeam(teamId)
+      setProjectMessage("You joined the team.")
+      const updatedDashboard = await getStudentDashboard()
+      setDashboard(updatedDashboard)
+      const data = await getStudentCourseProject(selectedCourse.id)
+      setProjectData(data)
+    } catch (requestError) {
+      setProjectError(requestError.message)
     } finally {
       setJoiningTeam(null)
     }
@@ -1088,11 +1154,133 @@ export default function StudentDashboard({ onLogout }) {
             ) : active === "My Profile" ? (
               profile ? <ProfilePage profile={profile} onRefreshProfile={async () => { const data = await getStudentProfile(); setProfile(data.student) }} /> : pageError ? <p className="text-xs text-[#a94646]" role="alert">{pageError}</p> : <p className="text-xs text-[#6d898b]" role="status">Loading your profile...</p>
             ) : active === "My Courses" ? (
-              coursePageData ? <CoursesPage courses={coursePageData} /> : pageError ? <p className="text-xs text-[#a94646]" role="alert">{pageError}</p> : <p className="text-xs text-[#6d898b]" role="status">Loading your courses...</p>
+              coursePageData ? <CoursesPage courses={coursePageData} onViewProject={handleViewProject} /> : pageError ? <p className="text-xs text-[#a94646]" role="alert">{pageError}</p> : <p className="text-xs text-[#6d898b]" role="status">Loading your courses...</p>
             ) : (
               <SettingsPage student={student} onSaveAccount={handleSaveAccount} />
             )}
           </div>
+          {selectedCourse && (
+            <div className="fixed inset-0 z-[60] grid place-items-center bg-[#003C43]/40 p-4 backdrop-blur-sm">
+              <section className="theme-surface w-full max-w-2xl rounded-2xl bg-white p-6 shadow-[0_20px_60px_rgba(0,60,67,0.25)] sm:p-7">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6D5BD0]">
+                      {selectedCourse.name}
+                    </p>
+                    <h2 className="mt-2 text-xl font-extrabold text-[#003C43]">
+                      {projectLoading ? "Loading project..." : projectData?.project?.title || "Project"}
+                    </h2>
+                  </div>
+                  <button
+                    onClick={() => setSelectedCourse(null)}
+                    className="rounded-lg p-2 text-[#77B0AA] transition hover:bg-[#E3FEF7] hover:text-[#003C43]"
+                    aria-label="Close project details"
+                  >
+                    <Icon name="close" />
+                  </button>
+                </div>
+
+                {projectError && (
+                  <p className="mt-4 rounded-xl bg-[#fff0f0] p-4 text-xs text-[#a94646]" role="alert">
+                    {projectError}
+                  </p>
+                )}
+
+                {projectData?.project && (
+                  <div className="mt-5 space-y-4">
+                    <p className="text-sm leading-6 text-[#587376]">
+                      {projectData.project.description || projectData.project.prd}
+                    </p>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="theme-soft rounded-xl bg-[#f0f7f6] p-3">
+                        <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">Deadline</div>
+                        <div className="mt-1 text-xs font-bold text-[#003C43]">
+                          {projectData.project.deadline
+                            ? new Date(projectData.project.deadline).toLocaleString()
+                            : "Not set"}
+                        </div>
+                      </div>
+                      <div className="theme-soft rounded-xl bg-[#f0f7f6] p-3">
+                        <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">Team size</div>
+                        <div className="mt-1 text-xs font-bold text-[#003C43]">
+                          {projectData.project.min_members_per_team}–{projectData.project.max_members_per_team} members
+                        </div>
+                      </div>
+                      <div className="theme-soft rounded-xl bg-[#f0f7f6] p-3">
+                        <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">Requirements</div>
+                        <div className="mt-1 text-xs font-bold text-[#003C43]">
+                          {projectData.project.requirements ? "Available" : "Not uploaded"}
+                        </div>
+                      </div>
+                    </div>
+
+                    {projectData.project.requirements && (
+                      <button
+                        onClick={() => openStudentProjectRequirements(projectData.project.id)}
+                        className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#E3FEF7] px-4 py-3 text-xs font-bold text-[#135D66] transition hover:bg-[#77B0AA] hover:text-[#003C43]"
+                      >
+                        <Icon name="file" className="h-4 w-4" />
+                        View requirements PDF
+                      </button>
+                    )}
+
+                    <form onSubmit={handleCreateTeam} className="rounded-xl border border-[#003C43]/8 p-4">
+                      <h3 className="text-sm font-bold text-[#003C43]">Create a team</h3>
+                      <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+                        <input
+                          value={teamName}
+                          onChange={(event) => setTeamName(event.target.value)}
+                          placeholder="Team name"
+                          className="theme-control flex-1 rounded-xl border border-[#003C43]/10 bg-white px-4 py-2.5 text-sm text-[#003C43] outline-none transition focus:border-[#6D5BD0] focus:ring-4 focus:ring-[#6D5BD0]/10"
+                        />
+                        <button
+                          type="submit"
+                          disabled={creatingTeam}
+                          className="rounded-xl bg-[#6D5BD0] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#5c49c5] disabled:cursor-wait disabled:opacity-60"
+                        >
+                          {creatingTeam ? "Creating..." : "Create team"}
+                        </button>
+                      </div>
+                    </form>
+
+                    <div>
+                      <h3 className="text-sm font-bold text-[#003C43]">Available teams</h3>
+                      <div className="mt-3 space-y-2">
+                        {availableTeams
+                          .filter((team) => team.course?.id === selectedCourse.id)
+                          .map((team) => (
+                            <article key={team.id} className="theme-soft flex items-center justify-between gap-3 rounded-xl bg-[#f0f7f6] p-3">
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-bold text-[#003C43]">{team.name}</div>
+                                <div className="mt-1 text-[10px] text-[#6d898b]">
+                                  {team.current_member_count}/{team.max_members} members · {team.available_spots} spots left
+                                </div>
+                              </div>
+                              <button
+                                disabled={joiningTeam === team.id || team.available_spots <= 0}
+                                onClick={() => handleJoinProjectTeam(team.id)}
+                                className="rounded-lg bg-[#E3FEF7] px-3 py-2 text-[10px] font-bold text-[#135D66] transition hover:bg-[#77B0AA] hover:text-[#003C43] disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {joiningTeam === team.id ? "Joining..." : "Join"}
+                              </button>
+                            </article>
+                          ))}
+                        {availableTeams.filter((team) => team.course?.id === selectedCourse.id).length === 0 && (
+                          <p className="text-xs text-[#6d898b]">No available teams were found for this course.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {projectMessage && (
+                      <p className="rounded-xl bg-[#E3FEF7] p-4 text-xs text-[#135D66]" role="status">
+                        {projectMessage}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </section>
+            </div>
+          )}
         </main>
       </div>
     </div>
