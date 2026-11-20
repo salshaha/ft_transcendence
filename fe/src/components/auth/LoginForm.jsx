@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "../../hooks/useAuth";
+import PasswordInput from "./PasswordInput";
 
 const initialValues = { first_name: "", last_name: "", student_id: "", email: "", password: "" };
 
@@ -49,7 +50,16 @@ export default function LoginForm({ onAuthenticated }) {
         {!isLogin && <label>First name<input name="first_name" value={values.first_name} onChange={handleChange} placeholder="Your first name" required /></label>}
         {!isLogin && <label>Last name<input name="last_name" value={values.last_name} onChange={handleChange} placeholder="Your last name" required /></label>}
         <label>Email address<input name="email" type="email" value={values.email} onChange={handleChange} placeholder="you@example.com" required /></label>
-        <label>Password<input name="password" type="password" value={values.password} onChange={handleChange} placeholder="At least 8 characters" minLength="8" required /></label>
+        <PasswordInput
+          key={isLogin ? "login-password" : "register-password"}
+          name="password"
+          value={values.password}
+          onChange={handleChange}
+          placeholder="At least 8 characters"
+          minLength={8}
+          autoComplete={isLogin ? "current-password" : "new-password"}
+          required
+        />
         {!isLogin && (
           <label>Student ID<input name="student_id" value={values.student_id} onChange={handleChange} placeholder="Your student ID" required /></label>
         )}

@@ -67,6 +67,49 @@
   font-weight: 600;
 }
 
+.password-input-shell {
+  position: relative;
+  display: block;
+}
+
+.password-input-shell input {
+  padding-right: 46px !important;
+}
+
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  padding: 7px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  color: #587376;
+  background: transparent;
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.password-toggle:hover,
+.password-toggle:focus-visible {
+  color: #135d66;
+  background: #edf7f5;
+  outline: none;
+}
+
+.password-toggle svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .form-shell input:not([type="radio"]) {
   width: 100%;
   border: 1px solid #dcebe8;
