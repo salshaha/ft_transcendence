@@ -18,6 +18,11 @@ from app.services.instructor_service import (
     upload_project_requirements,
 )
 from app.services.storage import StorageError
+from app.services.microsoft_graph_service import (
+    MicrosoftGraphError,
+    sync_instructor_courses,
+)
+from app.services.microsoft_identity import MicrosoftIdentityError
 
 instructor_bp = Blueprint("instructor", __name__)
 
@@ -228,6 +233,23 @@ def project_submissions(project_id):
         return jsonify({"message": str(exc)}), 404
     except SQLAlchemyError:
         return _database_error("Unable to retrieve submissions")
+
+
+@instructor_bp.route("/microsoft/sync-courses", methods=["POST"])
+def sync_microsoft_courses():
+    instructor, error = get_authenticated_instructor()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+
+    try:
+        return jsonify(sync_instructor_courses(instructor)), 200
+    except MicrosoftIdentityError as exc:
+        return jsonify({"message": str(exc)}), 401
+    except MicrosoftGraphError as exc:
+        return jsonify({"message": str(exc)}), 502
+    except SQLAlchemyError:
+        return _database_error("Unable to synchronize Microsoft courses")
 
 
 @instructor_bp.route("/grades", methods=["POST"])

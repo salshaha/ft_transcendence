@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "../../hooks/useAuth";
+import { getMicrosoftAuthStatus } from "../../services/authService";
 
 const initialValues = { first_name: "", last_name: "", student_id: "", email: "", password: "" };
 
@@ -7,18 +8,34 @@ export default function LoginForm({ onAuthenticated }) {
   const [mode, setMode] = useState("login");
   const [values, setValues] = useState(initialValues);
   const [success, setSuccess] = useState("");
+  const [microsoftConfigured, setMicrosoftConfigured] = useState(false);
+  const [microsoftError, setMicrosoftError] = useState("");
   const { submit, isLoading, error, clearError } = useAuth();
   const isLogin = mode === "login";
+
+  useEffect(() => {
+    getMicrosoftAuthStatus()
+      .then((status) => setMicrosoftConfigured(Boolean(status.configured)))
+      .catch(() => setMicrosoftConfigured(false));
+    const query = new URLSearchParams(window.location.search);
+    const authError = query.get("microsoft_error");
+    if (authError) {
+      setMicrosoftError(authError);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
 
   function changeMode(nextMode) {
     setMode(nextMode);
     setSuccess("");
+    setMicrosoftError("");
     clearError();
   }
 
   function handleChange(event) {
     setValues((current) => ({ ...current, [event.target.name]: event.target.value }));
     if (error) clearError();
+    if (microsoftError) setMicrosoftError("");
   }
 
   async function handleSubmit(event) {
@@ -31,6 +48,11 @@ export default function LoginForm({ onAuthenticated }) {
     } else {
       setSuccess("Your account is ready!");
     }
+  }
+
+  function startMicrosoftLogin() {
+    const apiUrl = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "");
+    window.location.assign(`${apiUrl}/api/auth/microsoft/login`);
   }
 
   return (
@@ -58,9 +80,10 @@ export default function LoginForm({ onAuthenticated }) {
             Student accounts can sign up here. Instructor accounts are created by an administrator.
           </p>
         )}
-        {error && <p className="form-message error" role="alert">{error}</p>}
+        {(error || microsoftError) && <p className="form-message error" role="alert">{error || microsoftError}</p>}
         {success && <p className="form-message success" role="status">{success}</p>}
         <button className="submit-button" type="submit" disabled={isLoading}>{isLoading ? "Please wait..." : isLogin ? "Continue to Team-Platform  →" : "Create my account  →"}</button>
+        {isLogin && microsoftConfigured && <button className="microsoft-button" type="button" onClick={startMicrosoftLogin}>Sign in with Microsoft</button>}
       </form>
       <p className="legal">By continuing, you agree to our <a href="#terms">Terms</a> and <a href="#privacy">Privacy Policy</a>.</p>
     </div>

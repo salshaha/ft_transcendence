@@ -350,6 +350,7 @@ CREATE TABLE password_reset_tokens (
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+
 -- ============================================================
 -- INDEXES
 -- PostgreSQL automatically indexes primary keys and unique

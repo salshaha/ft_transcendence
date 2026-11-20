@@ -29,6 +29,13 @@ export async function deleteInstructorProject(projectId) {
   })
 }
 
+export async function syncMicrosoftCourses() {
+  return apiRequest("/api/instructor/microsoft/sync-courses", {
+    method: "POST",
+    errorMessage: "Unable to sync Microsoft classes.",
+  });
+}
+
 export async function getInstructorProjectTeams(projectId) {
   return apiRequest(`/api/instructor/projects/${projectId}/teams`, {
     errorMessage: "Unable to load course teams.",

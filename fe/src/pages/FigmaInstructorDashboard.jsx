@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { createCourseProject, deleteInstructorProject, downloadInstructorProjectRequirements, getInstructorDashboard, getInstructorProjectTeams, updateInstructorProject, uploadInstructorProjectRequirements } from "../services/instructorService"
+import { createCourseProject, deleteInstructorProject, downloadInstructorProjectRequirements, getInstructorDashboard, getInstructorProjectTeams, syncMicrosoftCourses, updateInstructorProject, uploadInstructorProjectRequirements } from "../services/instructorService"
 
 const iconPaths = {
   grid: (
@@ -295,6 +295,9 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
   const [loadingCourseTeams, setLoadingCourseTeams] = useState(false)
   const [courseTeamsError, setCourseTeamsError] = useState("")
   const [projectFileError, setProjectFileError] = useState("")
+  const [syncingMicrosoftCourses, setSyncingMicrosoftCourses] = useState(false)
+  const [microsoftSyncMessage, setMicrosoftSyncMessage] = useState("")
+  const [microsoftSyncError, setMicrosoftSyncError] = useState("")
   const { instructor, courses, deadlines, students, projects, submissions, resources } = data
 
   async function openCourse(course) {
@@ -403,6 +406,24 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
       setProjectError(error.message)
     } finally {
       setSavingProject(false)
+    }
+  }
+
+  async function syncMicrosoftClasses() {
+    setSyncingMicrosoftCourses(true)
+    setMicrosoftSyncMessage("")
+    setMicrosoftSyncError("")
+    try {
+      const result = await syncMicrosoftCourses()
+      const refreshed = await getInstructorDashboard()
+      setData(refreshed)
+      setMicrosoftSyncMessage(
+        `Synced ${result.classes_added} new classes, updated ${result.classes_updated}, and enrolled ${result.enrollments_added} students.`,
+      )
+    } catch (error) {
+      setMicrosoftSyncError(error.message)
+    } finally {
+      setSyncingMicrosoftCourses(false)
     }
   }
 
@@ -701,7 +722,9 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
               </section>
             ) : active === "My courses" ? (
               <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
-                <h1 className="text-xl font-bold text-[#003C43]">My courses</h1>
+                <div className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-xl font-bold text-[#003C43]">My courses</h1><button type="button" onClick={syncMicrosoftClasses} disabled={syncingMicrosoftCourses} className="rounded-xl bg-[#135D66] px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60">{syncingMicrosoftCourses ? "Syncing Microsoft classes…" : "Sync Microsoft classes"}</button></div>
+                {microsoftSyncError && <p className="mt-3 text-sm text-[#a94646]" role="alert">{microsoftSyncError}</p>}
+                {microsoftSyncMessage && <p className="mt-3 text-sm text-[#135D66]" role="status">{microsoftSyncMessage}</p>}
                 <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {courses.map((course) => (
                     <button type="button" onClick={() => openCourse(course)} key={course.id} className="theme-surface rounded-xl bg-[#f0f7f6] p-4 text-left transition hover:bg-[#E3FEF7]">

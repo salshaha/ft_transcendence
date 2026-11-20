@@ -30,3 +30,9 @@ export function registerUser({ first_name, last_name, student_id, email, passwor
 export function logoutUser() {
   return apiRequest("/api/auth/logout", { method: "POST" });
 }
+
+export function getMicrosoftAuthStatus() {
+  return apiRequest("/api/auth/microsoft/status", {
+    errorMessage: "Unable to check Microsoft sign-in availability.",
+  });
+}
