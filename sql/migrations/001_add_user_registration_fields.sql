@@ -1,5 +1,7 @@
--- Bring databases initialized before student_id/domain were added in line with
--- sql-schema.sql and app.models.user.User. Safe to run more than once.
+-- Legacy bootstrap script for databases created before student_id/domain were
+-- added. New databases should use sql/sql-schema.sql or `flask db upgrade`;
+-- Alembic revision 0003 converts this script's unique index into the matching
+-- unique constraint. Safe to run more than once.
 ALTER TABLE users
     ADD COLUMN IF NOT EXISTS student_id VARCHAR(50),
     ADD COLUMN IF NOT EXISTS domain VARCHAR(100);

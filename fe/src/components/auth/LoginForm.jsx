@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useAuth } from "../../hooks/useAuth";
 
-const initialValues = { first_name: "", last_name: "", student_id: "", email: "", password: "", role: "student" };
+const initialValues = { first_name: "", last_name: "", student_id: "", email: "", password: "" };
 
 export default function LoginForm({ onAuthenticated }) {
   const [mode, setMode] = useState("login");
@@ -35,7 +35,7 @@ export default function LoginForm({ onAuthenticated }) {
 
   return (
     <div className="form-shell">
-      <div className="mobile-brand"><span className="brand-mark">P</span> pingora</div>
+      <div className="mobile-brand"><span className="brand-mark">N</span> Team-Platform</div>
       <div className="form-heading">
         <p className="eyebrow">YOUR SPACE AWAITS</p>
         <h2>{isLogin ? "Welcome back." : "Create your account."}</h2>
@@ -50,26 +50,17 @@ export default function LoginForm({ onAuthenticated }) {
         {!isLogin && <label>Last name<input name="last_name" value={values.last_name} onChange={handleChange} placeholder="Your last name" required /></label>}
         <label>Email address<input name="email" type="email" value={values.email} onChange={handleChange} placeholder="you@example.com" required /></label>
         <label>Password<input name="password" type="password" value={values.password} onChange={handleChange} placeholder="At least 8 characters" minLength="8" required /></label>
-        {!isLogin && values.role === "student" && (
+        {!isLogin && (
           <label>Student ID<input name="student_id" value={values.student_id} onChange={handleChange} placeholder="Your student ID" required /></label>
         )}
         {!isLogin && (
-          <fieldset className="role-picker">
-            <legend>I am joining as a...</legend>
-            <div className="role-options">
-              {["student", "instructor"].map((role) => (
-                <label className={`role-option ${values.role === role ? "selected" : ""}`} key={role}>
-                  <input type="radio" name="role" value={role} checked={values.role === role} onChange={handleChange} />
-                  <span className="role-icon">{role === "student" ? "✎" : "◆"}</span>
-                  <span>{role[0].toUpperCase() + role.slice(1)}</span><span className="radio-dot" />
-                </label>
-              ))}
-            </div>
-          </fieldset>
+          <p className="role-note">
+            Student accounts can sign up here. Instructor accounts are created by an administrator.
+          </p>
         )}
         {error && <p className="form-message error" role="alert">{error}</p>}
         {success && <p className="form-message success" role="status">{success}</p>}
-        <button className="submit-button" type="submit" disabled={isLoading}>{isLoading ? "Please wait..." : isLogin ? "Continue to Pingora  →" : "Create my account  →"}</button>
+        <button className="submit-button" type="submit" disabled={isLoading}>{isLoading ? "Please wait..." : isLogin ? "Continue to Team-Platform  →" : "Create my account  →"}</button>
       </form>
       <p className="legal">By continuing, you agree to our <a href="#terms">Terms</a> and <a href="#privacy">Privacy Policy</a>.</p>
     </div>

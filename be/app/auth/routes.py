@@ -1,32 +1,62 @@
-from flask import Blueprint, current_app, jsonify, request, session
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from werkzeug.security import check_password_hash, generate_password_hash
-from email_validator import EmailNotValidError, validate_email
+import hashlib
+import secrets
+from datetime import datetime, timedelta, timezone
+
+from flask import Blueprint, current_app, jsonify, request
+from sqlalchemy.exc import SQLAlchemyError
+from werkzeug.security import check_password_hash
 
 from app.extensions import db
+from app.models.password_reset import PasswordResetToken
 from app.models.user import User
+from app.security.csrf import get_csrf_token
+from app.services.auth_service import (
+    clear_user_session,
+    get_authenticated_user,
+    serialize_session_user,
+    start_user_session,
+)
+from app.services.user_service import (
+    UserConflictError,
+    UserValidationError,
+    create_user,
+    set_password,
+)
+from app.utils.validation import validate_password
+from app.utils.validation import normalize_email
 
 auth_bp = Blueprint("auth", __name__)
-PUBLIC_ROLES = {"student", "instructor"}
 
 
-def normalize_email(value):
-    if not isinstance(value, str):
-        return None
-    try:
-        return validate_email(value.strip(), check_deliverability=False).normalized.casefold()
-    except EmailNotValidError:
-        return None
+@auth_bp.after_request
+def prevent_auth_response_caching(response):
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
-def public_user(user):
-    return {
-        "id": user.id,
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "email": user.email,
-        "role": user.role,
-    }
+@auth_bp.route("/csrf", methods=["GET"])
+def csrf():
+    """Bootstrap the synchronizer token used by state-changing requests."""
+    return jsonify({"csrf_token": get_csrf_token()}), 200
+
+
+@auth_bp.route("/session", methods=["GET"])
+def session_info():
+    """Return the signed-in user, if any, so the frontend can restore state."""
+    user, error = get_authenticated_user()
+    if error:
+        return jsonify({
+            "authenticated": False,
+            "user": None,
+            "csrf_token": get_csrf_token(),
+        }), 200
+
+    return jsonify({
+        "authenticated": True,
+        "user": serialize_session_user(user),
+        "csrf_token": get_csrf_token(),
+    }), 200
 
 
 @auth_bp.route("/register", methods=["POST"])
@@ -35,62 +65,38 @@ def register():
     if not isinstance(data, dict):
         return jsonify({"message": "A JSON object is required"}), 400
 
-    first_name = data.get("first_name")
-    last_name = data.get("last_name")
-    email = normalize_email(data.get("email"))
-    password = data.get("password")
-    role = data.get("role")
-    student_id = data.get("student_id")
+    role = data.get("role", "student")
+    if role == "instructor":
+        return jsonify({
+            "message": (
+                "Instructor accounts are created by an administrator. "
+                "Contact your administrator to request access."
+            )
+        }), 403
+    if role != "student":
+        return jsonify({"message": "Role must be student"}), 400
 
-    if not isinstance(first_name, str) or not first_name.strip():
-        return jsonify({"message": "First name is required"}), 400
-    if not isinstance(last_name, str) or not last_name.strip():
-        return jsonify({"message": "Last name is required"}), 400
-    first_name = first_name.strip()
-    last_name = last_name.strip()
-    if len(first_name) > 100 or len(last_name) > 100:
-        return jsonify({"message": "Names must be 100 characters or fewer"}), 400
-    if not email:
-        return jsonify({"message": "A valid email address is required"}), 400
-    if not isinstance(password, str) or len(password) < 8:
-        return jsonify({"message": "Password must be at least 8 characters"}), 400
-    if not isinstance(role, str) or role not in PUBLIC_ROLES:
-        return jsonify({"message": "Role must be student or instructor"}), 400
-
-    if role == "student":
-        if not isinstance(student_id, str) or not student_id.strip():
-            return jsonify({"message": "Student ID is required for students"}), 400
-        student_id = student_id.strip()
-        if len(student_id) > 50:
-            return jsonify({"message": "Student ID must be 50 characters or fewer"}), 400
-    else:
-        student_id = None
-
-    if User.query.filter_by(email=email).first():
-        return jsonify({"message": "Email already exists"}), 409
-
-    user = User(
-        first_name=first_name,
-        last_name=last_name,
-        email=email,
-        password_hash=generate_password_hash(password),
-        role=role,
-        student_id=student_id,
-    )
-    db.session.add(user)
     try:
-        db.session.commit()
-    except IntegrityError:
-        db.session.rollback()
-        return jsonify({"message": "Email or student ID already exists"}), 409
+        user = create_user(
+            first_name=data.get("first_name"),
+            last_name=data.get("last_name"),
+            email=data.get("email"),
+            password=data.get("password"),
+            role="student",
+            student_id=data.get("student_id"),
+        )
+    except UserValidationError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except UserConflictError as exc:
+        return jsonify({"message": str(exc)}), 409
     except SQLAlchemyError:
-        db.session.rollback()
         current_app.logger.exception("Unable to register user")
         return jsonify({"message": "Unable to create account"}), 500
 
     return jsonify({
         "message": "User created successfully",
-        "user": public_user(user),
+        "user": serialize_session_user(user),
+        "csrf_token": get_csrf_token(),
     }), 201
 
 
@@ -106,20 +112,96 @@ def login():
         return jsonify({"message": "Wrong email or password"}), 401
 
     user = User.query.filter_by(email=email).first()
-    if not user or not user.password_hash or not check_password_hash(user.password_hash, password):
+    if (
+        not user
+        or not user.password_hash
+        or not check_password_hash(user.password_hash, password)
+    ):
         return jsonify({"message": "Wrong email or password"}), 401
 
-    session.clear()
-    session.permanent = True
-    session["user_id"] = user.id
-    session["email"] = user.email
+    csrf_token = start_user_session(user)
     return jsonify({
         "message": "Login successful",
-        "user": public_user(user),
+        "user": serialize_session_user(user),
+        "csrf_token": csrf_token,
     }), 200
 
 
 @auth_bp.route("/logout", methods=["POST"])
 def logout():
-    session.clear()
-    return jsonify({"message": "Logout successful"}), 200
+    csrf_token = clear_user_session()
+    return jsonify({
+        "message": "Logout successful",
+        "csrf_token": csrf_token,
+    }), 200
+
+
+@auth_bp.route("/password-reset/request", methods=["POST"])
+def request_password_reset():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        data = {}
+    email = normalize_email(data.get("email"))
+    response = {"message": "If the account exists, a reset token has been issued."}
+    if not email:
+        return jsonify(response), 200
+
+    user = User.query.filter_by(email=email).first()
+    if user is None or not user.password_hash:
+        return jsonify(response), 200
+
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    reset = PasswordResetToken(
+        user_id=user.id,
+        token_hash=token_hash,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+    db.session.add(reset)
+    try:
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        return jsonify({"message": "Unable to issue reset token"}), 500
+
+    response["reset_token"] = raw_token
+    return jsonify(response), 200
+
+
+@auth_bp.route("/password-reset/confirm", methods=["POST"])
+def confirm_password_reset():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"message": "A JSON object is required"}), 400
+
+    raw_token = data.get("token")
+    new_password = data.get("new_password", data.get("password"))
+    if not isinstance(raw_token, str) or not raw_token:
+        return jsonify({"message": "Reset token is required"}), 400
+
+    password_error = validate_password(new_password)
+    if password_error:
+        return jsonify({"message": password_error}), 400
+
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    reset = PasswordResetToken.query.filter_by(token_hash=token_hash).first()
+    if (
+        reset is None
+        or reset.used_at is not None
+        or reset.expires_at < datetime.now(timezone.utc)
+    ):
+        return jsonify({"message": "Invalid or expired reset token"}), 400
+
+    user = db.session.get(User, reset.user_id)
+    if user is None:
+        return jsonify({"message": "Invalid or expired reset token"}), 400
+
+    try:
+        set_password(user, new_password)
+        reset.used_at = datetime.now(timezone.utc)
+        db.session.commit()
+    except (UserValidationError, SQLAlchemyError):
+        db.session.rollback()
+        return jsonify({"message": "Unable to reset password"}), 400
+
+    return jsonify({"message": "Password reset successfully"}), 200

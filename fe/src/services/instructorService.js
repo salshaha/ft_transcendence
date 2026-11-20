@@ -1,12 +1,7 @@
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+import { apiRequest } from "./apiClient";
 
 export async function getInstructorDashboard() {
-  const response = await fetch(`${API_URL}/api/instructor/dashboard`, {
-    credentials: "include",
+  return apiRequest("/api/instructor/dashboard", {
+    errorMessage: "Unable to load the instructor dashboard.",
   });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data.message || "Unable to load the instructor dashboard.");
-  }
-  return data;
 }

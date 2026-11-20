@@ -351,6 +351,28 @@ The exact database variables may change when the PostgreSQL/Docker configuration
 
 Never commit real passwords, API keys, tokens, or other secrets.
 
+Additional security/storage settings (all optional for local development):
+
+```env
+# Set to true when serving over HTTPS.
+SESSION_COOKIE_SECURE=false
+SESSION_LIFETIME_DAYS=14
+
+# Local disk is the selected storage backend for this phase.
+STORAGE_BACKEND=local
+STORAGE_ROOT=/absolute/path/to/uploads
+
+# Upload limits in bytes.
+MAX_CONTENT_LENGTH_BYTES=115343360
+STORAGE_MAX_AVATAR_BYTES=5242880
+STORAGE_MAX_PROJECT_REQUIREMENTS_BYTES=20971520
+STORAGE_MAX_TASK_ATTACHMENT_BYTES=26214400
+STORAGE_MAX_PROJECT_SUBMISSION_BYTES=104857600
+```
+
+See `docs/foundations.md` for the authorization, CSRF, role-provisioning, and
+file-storage decisions.
+
 ---
 
 # Backend Setup
@@ -401,7 +423,30 @@ pip install -r requirements.txt
 
 ---
 
-## 4. Run the Flask backend
+## 4. Create the first admin or provision an instructor
+
+Public registration only creates student accounts. Instructor and admin
+accounts are provisioned by an administrator:
+
+```bash
+cd be
+flask --app run.py create-admin
+flask --app run.py create-instructor
+```
+
+For non-interactive setup, set `ADMIN_EMAIL`/`ADMIN_PASSWORD` or
+`INSTRUCTOR_EMAIL`/`INSTRUCTOR_PASSWORD` before running the command. Use
+`--force` to update an existing account and reset its password.
+
+Apply database migrations after pulling schema changes:
+
+```bash
+flask --app run.py db upgrade
+```
+
+---
+
+## 5. Run the Flask backend
 
 From inside `be/`:
 
@@ -738,6 +783,12 @@ The exact API endpoints should follow:
 ```text
 docs/api-naming-rules.md
 ```
+
+State-changing API requests use cookie sessions and require a CSRF token.
+Fetch it from `GET /api/auth/csrf`, store it in memory, and send it back in the
+`X-CSRF-Token` header for `POST`, `PUT`, `PATCH`, and `DELETE`. The React client
+in `fe/src/services/apiClient.js` already handles this bootstrap and retry
+behaviour. `GET /api/auth/session` restores the signed-in user after refresh.
 
 Do not introduce a new endpoint naming convention without updating the API rules and discussing it with the team.
 

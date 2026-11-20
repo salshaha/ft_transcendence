@@ -1,10 +1,11 @@
 from datetime import datetime, timezone
 
-from flask import session
-from sqlalchemy import exists, func, or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import aliased, joinedload, selectinload
 
 from app.extensions import db
+from app.models.grade import Grade
+from app.models.peer_feedback import PeerFeedback
 from app.models.student_dashboard import (
     Course,
     CourseEnrollment,
@@ -13,22 +14,13 @@ from app.models.student_dashboard import (
     Team,
     TeamMember,
 )
+from app.models.submission import Submission
 from app.models.user import User
+from app.services.auth_service import get_authenticated_user
 
 
 def get_authenticated_student():
-    user_id = session.get("user_id")
-    if user_id is None:
-        return None, ("Authentication required", 401)
-
-    student = db.session.get(User, user_id)
-    if student is None:
-        session.clear()
-        return None, ("Authenticated user was not found", 401)
-    if student.role != "student":
-        return None, ("Student role required", 403)
-
-    return student, None
+    return get_authenticated_user(allowed_roles={"student"})
 
 
 def serialize_profile(student):
@@ -43,6 +35,7 @@ def serialize_profile(student):
         "joined_year": student.joined_year,
         "domain": student.domain,
         "profile_picture": student.profile_picture,
+        "gpa": float(student.gpa.gpa) if student.gpa else None,
         "greeting": f"Welcome, {student.first_name}!",
     }
 
@@ -252,3 +245,341 @@ def get_dashboard(student):
         "deadlines": get_deadlines(student.id),
         "available_teams": get_available_teams(student.id),
     }
+
+
+def _parse_datetime(value):
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ValueError("deadline must be an ISO-8601 datetime")
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def get_course_project(student_id, course_id):
+    enrolled = CourseEnrollment.query.filter_by(
+        student_id=student_id, course_id=course_id
+    ).first()
+    if enrolled is None:
+        return None
+    course = Course.query.get(course_id)
+    if course is None or course.project is None:
+        return None
+    project = course.project
+    return {
+        "course": {"id": course.id, "name": course.name},
+        "project": {
+            "id": project.id,
+            "title": project.title,
+            "description": project.description,
+            "deadline": project.deadline.isoformat() if project.deadline else None,
+            "min_members_per_team": project.min_members_per_team,
+            "max_members_per_team": project.max_members_per_team,
+            "prd": project.prd,
+            "requirements": {
+                "file_key": project.requirements_file_key,
+                "original_name": project.requirements_original_name,
+                "content_type": project.requirements_content_type,
+                "size": project.requirements_size,
+            } if project.requirements_file_key else None,
+        },
+    }
+
+
+def create_team(student_id, data):
+    project_id = data.get("project_id")
+    if project_id is None:
+        raise ValueError("project_id is required")
+    try:
+        project_id = int(project_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("project_id must be an integer") from exc
+
+    project = Project.query.get(project_id)
+    if project is None:
+        raise LookupError("Project not found")
+
+    enrolled = CourseEnrollment.query.filter_by(
+        student_id=student_id, course_id=project.course_id
+    ).first()
+    if enrolled is None:
+        raise PermissionError("Student is not enrolled in this project's course")
+
+    existing = (
+        TeamMember.query.join(Team)
+        .filter(TeamMember.student_id == student_id, Team.project_id == project.id)
+        .first()
+    )
+    if existing is not None:
+        raise ValueError("Student already belongs to a team in this project")
+
+    name = (data.get("name") or "").strip()
+    if not name:
+        name = f"Team {student_id}"
+    if len(name) > 150:
+        raise ValueError("Team name must be 150 characters or fewer")
+
+    team = Team(
+        project_id=project.id,
+        name=name,
+        leader_id=student_id,
+        status="forming",
+    )
+    db.session.add(team)
+    db.session.flush()
+    membership = TeamMember(team_id=team.id, student_id=student_id)
+    db.session.add(membership)
+    db.session.commit()
+    return {
+        "id": team.id,
+        "name": team.name,
+        "project_id": team.project_id,
+        "leader_id": team.leader_id,
+        "status": team.status,
+    }
+
+
+def leave_team(student_id, team_id):
+    membership = TeamMember.query.filter_by(
+        team_id=team_id, student_id=student_id
+    ).first()
+    if membership is None:
+        raise LookupError("Membership not found")
+
+    team = Team.query.get(team_id)
+    db.session.delete(membership)
+    db.session.flush()
+
+    remaining = TeamMember.query.filter_by(team_id=team_id).count()
+    if remaining == 0:
+        db.session.delete(team)
+    elif team.leader_id == student_id:
+        new_leader = TeamMember.query.filter_by(team_id=team_id).first()
+        team.leader_id = new_leader.student_id if new_leader else None
+
+    db.session.commit()
+    return {"message": "Left team successfully"}
+
+
+def get_team_details(student_id, team_id):
+    team = (
+        Team.query.options(
+            selectinload(Team.members).joinedload(TeamMember.student),
+            joinedload(Team.project).joinedload(Project.course),
+        )
+        .filter(Team.id == team_id)
+        .first()
+    )
+    if team is None:
+        raise LookupError("Team not found")
+
+    is_member = any(m.student_id == student_id for m in team.members)
+    is_instructor = False
+    # allow instructor/admin handled by route; here student only
+    if not is_member:
+        raise PermissionError("You are not a member of this team")
+
+    return {
+        "id": team.id,
+        "name": team.name,
+        "status": team.status,
+        "leader_id": team.leader_id,
+        "project": {
+            "id": team.project.id,
+            "course": {"id": team.project.course.id, "name": team.project.course.name},
+        },
+        "members": [
+            {
+                "student_id": m.student.id,
+                "name": f"{m.student.first_name} {m.student.last_name}",
+                "joined_at": m.joined_at.isoformat() if m.joined_at else None,
+            }
+            for m in team.members
+        ],
+    }
+
+
+def submit_project(student_id, team_id, file_storage):
+    membership = TeamMember.query.filter_by(
+        team_id=team_id, student_id=student_id
+    ).first()
+    if membership is None:
+        raise PermissionError("You are not a member of this team")
+
+    team = Team.query.get(team_id)
+    if team is None:
+        raise LookupError("Team not found")
+
+    storage = None
+    from flask import current_app
+
+    storage = current_app.extensions["storage"]
+    stored = storage.save_upload(
+        file_storage, "project_submission", team.id
+    )
+
+    submission = Submission.query.filter_by(team_id=team.id).first()
+    if submission is None:
+        submission = Submission(
+            team_id=team.id,
+            submitted_by=student_id,
+            file_key=stored.key,
+            original_name=stored.original_name,
+            content_type=stored.content_type,
+            size=stored.size,
+            sha256=stored.sha256,
+        )
+        db.session.add(submission)
+    else:
+        old_key = submission.file_key
+        submission.submitted_by = student_id
+        submission.file_key = stored.key
+        submission.original_name = stored.original_name
+        submission.content_type = stored.content_type
+        submission.size = stored.size
+        submission.sha256 = stored.sha256
+        submission.submitted_at = datetime.now(timezone.utc)
+        if old_key and old_key != stored.key:
+            storage.delete(old_key)
+
+    db.session.commit()
+    return {
+        "id": submission.id,
+        "team_id": submission.team_id,
+        "submitted_by": submission.submitted_by,
+        "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else None,
+        "file": {
+            "key": submission.file_key,
+            "original_name": submission.original_name,
+            "content_type": submission.content_type,
+            "size": submission.size,
+            "sha256": submission.sha256,
+        },
+    }
+
+
+def get_submission(student_id, team_id):
+    membership = TeamMember.query.filter_by(
+        team_id=team_id, student_id=student_id
+    ).first()
+    if membership is None:
+        raise PermissionError("You are not a member of this team")
+
+    submission = Submission.query.filter_by(team_id=team_id).first()
+    if submission is None:
+        return None
+    return {
+        "id": submission.id,
+        "team_id": submission.team_id,
+        "submitted_by": submission.submitted_by,
+        "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else None,
+        "file": {
+            "key": submission.file_key,
+            "original_name": submission.original_name,
+            "content_type": submission.content_type,
+            "size": submission.size,
+            "sha256": submission.sha256,
+        },
+    }
+
+
+def save_peer_feedback(student_id, data):
+    project_id = data.get("project_id")
+    to_student_id = data.get("to_student_id")
+    if project_id is None or to_student_id is None:
+        raise ValueError("project_id and to_student_id are required")
+    try:
+        project_id = int(project_id)
+        to_student_id = int(to_student_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("project_id and to_student_id must be integers") from exc
+
+    project = Project.query.get(project_id)
+    if project is None:
+        raise LookupError("Project not found")
+
+    # student must be in a team for this project
+    membership = (
+        TeamMember.query.join(Team)
+        .filter(TeamMember.student_id == student_id, Team.project_id == project.id)
+        .first()
+    )
+    if membership is None:
+        raise PermissionError("You are not part of a team for this project")
+
+    recipient_membership = (
+        TeamMember.query.join(Team)
+        .filter(
+            TeamMember.student_id == to_student_id, Team.project_id == project.id
+        )
+        .first()
+    )
+    if recipient_membership is None:
+        raise LookupError("Recipient is not part of a team for this project")
+    if int(to_student_id) == int(student_id):
+        raise ValueError("Cannot provide feedback to yourself")
+
+    rating = data.get("rating")
+    if rating is not None and rating != "":
+        try:
+            rating = int(rating)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("rating must be an integer") from exc
+        if rating < 1 or rating > 5:
+            raise ValueError("rating must be between 1 and 5")
+    else:
+        rating = None
+
+    feedback_text = data.get("feedback")
+
+    pf = PeerFeedback.query.filter_by(
+        project_id=project.id,
+        from_student_id=student_id,
+        to_student_id=to_student_id,
+    ).first()
+    if pf is None:
+        pf = PeerFeedback(
+            project_id=project.id,
+            from_student_id=student_id,
+            to_student_id=to_student_id,
+            rating=rating,
+            feedback=feedback_text,
+        )
+        db.session.add(pf)
+    else:
+        pf.rating = rating
+        pf.feedback = feedback_text
+
+    db.session.commit()
+    return {
+        "id": pf.id,
+        "project_id": pf.project_id,
+        "from_student_id": pf.from_student_id,
+        "to_student_id": pf.to_student_id,
+        "rating": pf.rating,
+        "feedback": pf.feedback,
+    }
+
+
+def get_my_grades(student_id):
+    grades = (
+        Grade.query.filter_by(student_id=student_id)
+        .options(joinedload(Grade.project))
+        .order_by(Grade.updated_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": g.id,
+            "project_id": g.project_id,
+            "project_title": g.project.title if g.project else None,
+            "grade": float(g.grade) if g.grade is not None else None,
+            "feedback": g.feedback,
+            "published": g.published,
+            "updated_at": g.updated_at.isoformat() if g.updated_at else None,
+        }
+        for g in grades
+        if g.published
+    ]

@@ -1,53 +1,306 @@
-from email_validator import EmailNotValidError, validate_email
-from flask import Blueprint, jsonify, request, session
-from sqlalchemy.exc import IntegrityError
-from werkzeug.security import generate_password_hash
+from flask import Blueprint, current_app, jsonify, request, session
+from sqlalchemy.exc import SQLAlchemyError
+from werkzeug.utils import secure_filename
 
 from app.extensions import db
-from app.models.user import User
+from app.security.csrf import rotate_csrf_token
+from app.services.auth_service import get_authenticated_user
+from app.services.storage import StorageValidationError
+from app.services.user_service import (
+    UserAuthenticationError,
+    UserConflictError,
+    UserValidationError,
+    add_user_skill,
+    remove_user_skill,
+    update_credentials,
+    update_profile,
+    update_user_skill,
+)
 
 users_bp = Blueprint("users", __name__)
 
 
-def see_if_validate_email(email):
-    if not isinstance(email, str):
-        return False
-    try:
-        return validate_email(email.strip(), check_deliverability=False).normalized.casefold()
-    except EmailNotValidError:
-        return False
-
-
 @users_bp.route("/update_info", methods=["PUT"])
 def update_info():
-    user_id = session.get("user_id")
-    if user_id is None:
-        return jsonify({"message": "No user is logged in"}), 401
+    user, error = get_authenticated_user()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
 
-    user = db.session.get(User, user_id)
-    if user is None:
-        session.clear()
-        return jsonify({"message": "User not found"}), 404
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        data = request.form
 
-    data = request.get_json(silent=True) or request.form
-    password = data.get("password")
+    new_password = data.get("new_password")
+    legacy_password = data.get("password")
+    if (
+        new_password is not None
+        and legacy_password is not None
+        and new_password != legacy_password
+    ):
+        return jsonify({
+            "message": "Provide either new_password or password, not both"
+        }), 400
+    if new_password is None:
+        new_password = legacy_password
+
     email = data.get("email")
 
-    if password is not None:
-        if not isinstance(password, str) or len(password) < 8:
-            return jsonify({"message": "Password must be at least 8 characters"}), 400
-        user.password_hash = generate_password_hash(password)
+    try:
+        updated_user = update_credentials(
+            user,
+            current_password=data.get("current_password"),
+            email=email,
+            new_password=new_password,
+        )
+    except UserValidationError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except UserAuthenticationError as exc:
+        return jsonify({"message": str(exc)}), 403
+    except UserConflictError as exc:
+        return jsonify({"message": str(exc)}), 409
+    except SQLAlchemyError:
+        db.session.rollback()
+        current_app.logger.exception("Unable to update user information")
+        return jsonify({"message": "Unable to update account information"}), 500
 
-    if email is not None:
-        normalized_email = see_if_validate_email(email)
-        if not normalized_email:
-            return jsonify({"message": "Invalid email address"}), 400
-        user.email = normalized_email
+    session["email"] = updated_user.email
+    return jsonify({
+        "message": "Information updated successfully",
+        "user": {
+            "id": updated_user.id,
+            "email": updated_user.email,
+        },
+        "csrf_token": rotate_csrf_token(),
+    }), 200
+
+
+@users_bp.route("/me", methods=["GET"])
+def me():
+    user, error = get_authenticated_user()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+
+    skills = [
+        {
+            "skill_id": ss.skill_id,
+            "name": ss.skill.name,
+            "category": ss.skill.category,
+            "proficiency_level": ss.proficiency_level,
+        }
+        for ss in user.skills
+    ]
+    return jsonify({
+        "user": {
+            "id": user.id,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "email": user.email,
+            "role": user.role,
+            "major": user.major,
+            "joined_year": user.joined_year,
+            "domain": user.domain,
+            "student_id": user.student_id,
+            "profile_picture": user.profile_picture,
+            "gpa": float(user.gpa.gpa) if user.gpa else None,
+            "skills": skills,
+        }
+    }), 200
+
+
+@users_bp.route("/me", methods=["PUT"])
+def update_me():
+    user, error = get_authenticated_user()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        data = request.form
 
     try:
-        db.session.commit()
-    except IntegrityError:
+        updated = update_profile(
+            user,
+            first_name=data.get("first_name"),
+            last_name=data.get("last_name"),
+            major=data.get("major"),
+            joined_year=data.get("joined_year"),
+            domain=data.get("domain"),
+            student_id=data.get("student_id"),
+        )
+    except (UserValidationError, UserConflictError) as exc:
+        return jsonify({"message": str(exc)}), 400
+    except SQLAlchemyError:
         db.session.rollback()
-        return jsonify({"message": "Email already exists"}), 409
+        return jsonify({"message": "Unable to update profile"}), 500
 
-    return jsonify({"message": "Information updated successfully"}), 200
+    return jsonify({"message": "Profile updated", "user_id": updated.id}), 200
+
+
+@users_bp.route("/me/avatar", methods=["POST"])
+def upload_avatar():
+    user, error = get_authenticated_user()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+
+    file_storage = request.files.get("avatar") or request.files.get("file")
+    if file_storage is None:
+        return jsonify({"message": "avatar file is required"}), 400
+
+    storage = current_app.extensions["storage"]
+    try:
+        stored = storage.save_upload(file_storage, "avatar", user.id)
+    except StorageValidationError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except SQLAlchemyError:
+        db.session.rollback()
+        return jsonify({"message": "Unable to upload avatar"}), 500
+
+    old_key = user.profile_picture
+    user.profile_picture = stored.key
+    try:
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        storage.delete(stored.key)
+        return jsonify({"message": "Unable to save avatar"}), 500
+
+    if old_key and old_key != stored.key:
+        storage.delete(old_key)
+    return jsonify({
+        "message": "Avatar uploaded",
+        "profile_picture": stored.key,
+    }), 200
+
+
+@users_bp.route("/me/avatar", methods=["DELETE"])
+def delete_avatar():
+    user, error = get_authenticated_user()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+
+    key = user.profile_picture
+    user.profile_picture = None
+    try:
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        return jsonify({"message": "Unable to remove avatar"}), 500
+
+    if key:
+        current_app.extensions["storage"].delete(key)
+    return jsonify({"message": "Avatar removed"}), 200
+
+
+@users_bp.route("/skills", methods=["GET"])
+def list_skills():
+    user, error = get_authenticated_user()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+
+    from app.models.skill import Skill
+
+    query = Skill.query
+    search = request.args.get("search") or request.args.get("q")
+    if search:
+        pattern = f"%{search}%"
+        query = query.filter(Skill.name.ilike(pattern))
+    category = request.args.get("category")
+    if category:
+        query = query.filter(Skill.category == category)
+    skills = query.order_by(Skill.name.asc()).limit(100).all()
+    return jsonify({
+        "skills": [
+            {
+                "id": s.id,
+                "name": s.name,
+                "category": s.category,
+                "description": s.description,
+            }
+            for s in skills
+        ]
+    }), 200
+
+
+@users_bp.route("/me/skills", methods=["POST"])
+def add_skill():
+    user, error = get_authenticated_user()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        data = request.form
+
+    try:
+        skill, membership = add_user_skill(
+            user,
+            skill_id=data.get("skill_id"),
+            name=data.get("name") or data.get("skill"),
+            category=data.get("category"),
+            proficiency_level=data.get("proficiency_level", 3),
+        )
+    except (UserValidationError, UserConflictError) as exc:
+        return jsonify({"message": str(exc)}), 400
+    except SQLAlchemyError:
+        db.session.rollback()
+        return jsonify({"message": "Unable to add skill"}), 500
+
+    return jsonify({
+        "message": "Skill added",
+        "skill": {
+            "id": skill.id,
+            "name": skill.name,
+            "category": skill.category,
+        },
+        "proficiency_level": membership.proficiency_level,
+    }), 201
+
+
+@users_bp.route("/me/skills/<int:skill_id>", methods=["PUT"])
+def update_skill(skill_id):
+    user, error = get_authenticated_user()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+
+    data = request.get_json(silent=True) or {}
+    try:
+        membership = update_user_skill(
+            user, skill_id, data.get("proficiency_level", 3)
+        )
+    except (UserValidationError, UserConflictError) as exc:
+        return jsonify({"message": str(exc)}), 400
+    except SQLAlchemyError:
+        db.session.rollback()
+        return jsonify({"message": "Unable to update skill"}), 500
+
+    return jsonify({
+        "message": "Skill updated",
+        "skill_id": skill_id,
+        "proficiency_level": membership.proficiency_level,
+    }), 200
+
+
+@users_bp.route("/me/skills/<int:skill_id>", methods=["DELETE"])
+def remove_skill(skill_id):
+    user, error = get_authenticated_user()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+
+    try:
+        remove_user_skill(user, skill_id)
+    except (UserValidationError, UserConflictError) as exc:
+        return jsonify({"message": str(exc)}), 400
+    except SQLAlchemyError:
+        db.session.rollback()
+        return jsonify({"message": "Unable to remove skill"}), 500
+
+    return jsonify({"message": "Skill removed"}), 200
