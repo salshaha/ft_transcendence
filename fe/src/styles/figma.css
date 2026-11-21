@@ -65,6 +65,75 @@
     background: #174247;
   }
 
+  .dark {
+    color-scheme: dark;
+  }
+
+  .dark [class~="bg-white"],
+  .dark [class~="bg-[#f5faf9]"],
+  .dark [class~="bg-[#f0f7f6]"],
+  .dark [class~="bg-[#f7fbfa]"],
+  .dark [class~="bg-[#f5f3ff]"] {
+    background-color: #0d292d !important;
+  }
+
+  .dark [class~="bg-[#fff0f0]"] {
+    background-color: #3a1f22 !important;
+  }
+
+  .dark [class~="border-[#003C43]/8"],
+  .dark [class~="border-[#003C43]/10"],
+  .dark [class~="border-[#003C43]/15"],
+  .dark [class~="border-[#003C43]/20"] {
+    border-color: rgb(119 176 170 / 18%) !important;
+  }
+
+  .dark input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+  .dark select,
+  .dark textarea {
+    color: #d5ebe8;
+    background-color: #123438;
+    border-color: rgb(119 176 170 / 22%);
+  }
+
+  .dark input::placeholder,
+  .dark textarea::placeholder {
+    color: #7fa09d;
+  }
+
+  .dark select option {
+    color: #d5ebe8;
+    background-color: #123438;
+  }
+
+  .dark table,
+  .dark th,
+  .dark td {
+    border-color: rgb(119 176 170 / 14%);
+  }
+
+  .dark iframe {
+    background-color: #0d292d;
+  }
+
+  .dark [class*="text-[#365c60]"],
+  .dark [class*="text-[#31304c]"],
+  .dark [class*="text-[#135D66]"],
+  .dark [class*="text-[#6D5BD0]"] {
+    color: #a8d6d1;
+  }
+
+  .dark [class*="text-[#a94646]"] {
+    color: #ffb4ad;
+  }
+
+  .dark .theme-invert [class*="text-[#135D66]"],
+  .dark aside [class*="text-[#135D66]"],
+  .dark .theme-invert [class*="text-[#6D5BD0]"],
+  .dark aside [class*="text-[#6D5BD0]"] {
+    color: #003c43;
+  }
+
   .dark [class*="text-[#003C43]"],
   .dark [class*="text-[#18484d]"],
   .dark [class*="text-[#183f43]"] {

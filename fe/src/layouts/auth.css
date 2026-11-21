@@ -128,6 +128,51 @@
   box-shadow: 0 0 0 3px rgb(119 176 170 / 18%);
 }
 
+.auth-link {
+  margin: -4px 0 0;
+  border: 0;
+  padding: 0;
+  color: #135d66;
+  background: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.auth-link:hover,
+.auth-link:focus-visible {
+  text-decoration: underline;
+  outline: none;
+}
+
+.token-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #dcebe8;
+  border-radius: 10px;
+  padding: 14px;
+  background: #f5faf9;
+}
+
+.token-panel p {
+  margin: 0;
+  color: #587376;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.token-panel code {
+  overflow-wrap: anywhere;
+  color: #003c43;
+  font-size: 11px;
+}
+
+.token-panel .submit-button {
+  padding: 11px;
+  font-size: 12px;
+  box-shadow: none;
+}
+
 .role-note {
   margin: -3px 0 0;
   color: #6d898b;

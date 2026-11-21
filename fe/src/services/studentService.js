@@ -20,8 +20,13 @@ export function getStudentCourseProject(courseId) {
   return apiRequest(`/api/student/courses/${courseId}/project`);
 }
 
-export function getStudentCourseTeams(courseId) {
-  return apiRequest(`/api/student/courses/${courseId}/teams`);
+export function getStudentCourseTeams(courseId, projectId = null) {
+  const query = projectId === null ? "" : `?project_id=${projectId}`;
+  return apiRequest(`/api/student/courses/${courseId}/teams${query}`);
+}
+
+export function getStudentTeams() {
+  return apiRequest("/api/student/teams");
 }
 
 export function createStudentTeam({ projectId, name }) {

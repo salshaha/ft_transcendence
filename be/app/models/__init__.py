@@ -14,6 +14,7 @@ from app.models.student_dashboard import (
 )
 from app.models.student_gpa import StudentGPA
 from app.models.submission import Submission
+from app.models.task_collaboration import TaskAttachment, TaskComment
 from app.models.user import User
 
 __all__ = [
@@ -29,6 +30,8 @@ __all__ = [
     "StudentSkill",
     "Submission",
     "Task",
+    "TaskAttachment",
+    "TaskComment",
     "Team",
     "TeamMember",
     "User",

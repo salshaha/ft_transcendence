@@ -1,5 +1,6 @@
 from flask import Blueprint, current_app, jsonify, request, send_file
 from io import BytesIO
+import mimetypes
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.extensions import db
@@ -9,9 +10,13 @@ from app.services.instructor_service import (
     get_authenticated_instructor,
     get_course_students,
     get_courses,
+    get_all_submissions,
     get_dashboard,
+    get_instructor_submission,
     get_project_submissions,
     get_project_teams,
+    get_student_avatar_owner,
+    get_student_profile,
     save_grade,
     serialize_project,
     update_project,
@@ -25,6 +30,10 @@ instructor_bp = Blueprint("instructor", __name__)
 def _database_error(message):
     db.session.rollback()
     return jsonify({"message": message}), 500
+
+
+def _wants_download():
+    return str(request.args.get("download", "")).lower() in {"1", "true", "yes"}
 
 
 @instructor_bp.route("/dashboard", methods=["GET"])
@@ -66,6 +75,46 @@ def course_students(course_id):
         return jsonify({"students": students}), 200
     except SQLAlchemyError:
         return _database_error("Unable to retrieve students")
+
+
+@instructor_bp.route("/students/<int:student_id>", methods=["GET"])
+def student_profile(student_id):
+    instructor, error = get_authenticated_instructor()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+    try:
+        return jsonify({"student": get_student_profile(instructor.id, student_id)}), 200
+    except LookupError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except SQLAlchemyError:
+        return _database_error("Unable to retrieve student profile")
+
+
+@instructor_bp.route("/students/<int:student_id>/avatar", methods=["GET"])
+def student_avatar(student_id):
+    instructor, error = get_authenticated_instructor()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+    try:
+        student = get_student_avatar_owner(instructor.id, student_id)
+    except LookupError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except SQLAlchemyError:
+        return _database_error("Unable to retrieve student avatar")
+
+    try:
+        stream = current_app.extensions["storage"].open(student.profile_picture)
+    except (StorageError, OSError):
+        return jsonify({"message": "Unable to read student avatar"}), 404
+    content_type = mimetypes.guess_type(student.profile_picture)[0] or "application/octet-stream"
+    return send_file(
+        stream,
+        mimetype=content_type,
+        as_attachment=False,
+        download_name="avatar",
+    )
 
 
 @instructor_bp.route("/courses/<int:course_id>/project", methods=["POST"])
@@ -193,7 +242,7 @@ def download_requirements(project_id):
     return send_file(
         BytesIO(data),
         mimetype=project.requirements_content_type or "application/pdf",
-        as_attachment=False,
+        as_attachment=_wants_download(),
         download_name=project.requirements_original_name or "requirements.pdf",
     )
 
@@ -228,6 +277,48 @@ def project_submissions(project_id):
         return jsonify({"message": str(exc)}), 404
     except SQLAlchemyError:
         return _database_error("Unable to retrieve submissions")
+
+
+@instructor_bp.route("/submissions", methods=["GET"])
+def all_submissions():
+    instructor, error = get_authenticated_instructor()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+    try:
+        return jsonify({"submissions": get_all_submissions(instructor.id)}), 200
+    except SQLAlchemyError:
+        return _database_error("Unable to retrieve submissions")
+
+
+@instructor_bp.route("/submissions/<int:submission_id>/file", methods=["GET"])
+def submission_file(submission_id):
+    instructor, error = get_authenticated_instructor()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+
+    try:
+        submission = get_instructor_submission(instructor.id, submission_id)
+    except LookupError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except SQLAlchemyError:
+        return _database_error("Unable to retrieve submission")
+
+    storage = current_app.extensions["storage"]
+    try:
+        stream = storage.open(submission.file_key)
+        data = stream.read()
+        stream.close()
+    except (StorageError, OSError):
+        return jsonify({"message": "Unable to read submission"}), 500
+
+    return send_file(
+        BytesIO(data),
+        mimetype=submission.content_type,
+        as_attachment=_wants_download(),
+        download_name=submission.original_name,
+    )
 
 
 @instructor_bp.route("/grades", methods=["POST"])

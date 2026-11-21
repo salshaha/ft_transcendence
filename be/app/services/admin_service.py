@@ -111,7 +111,10 @@ def list_courses():
             "instructor_id": c.instructor_id,
             "microsoft_class_id": c.microsoft_class_id,
             "student_count": CourseEnrollment.query.filter_by(course_id=c.id).count(),
-            "project_id": c.project.id if c.project else None,
+            "projects": [
+                {"id": project.id, "title": project.title}
+                for project in sorted(c.projects, key=lambda item: item.id, reverse=True)
+            ],
         }
         for c in courses
     ]

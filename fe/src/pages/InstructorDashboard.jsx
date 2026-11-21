@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { getInstructorDashboard } from "../services/instructorService";
 import FigmaInstructorDashboard from "./FigmaInstructorDashboard";
 
-export default function InstructorDashboard({ onLogout }) {
+export default function InstructorDashboard({ onLogout, onRequestPasswordReset }) {
   const [dashboard, setDashboard] = useState(null);
   const [error, setError] = useState("");
 
@@ -35,5 +35,5 @@ export default function InstructorDashboard({ onLogout }) {
     );
   }
 
-  return <FigmaInstructorDashboard dashboard={dashboard} onLogout={onLogout} />;
+  return <FigmaInstructorDashboard dashboard={dashboard} onLogout={onLogout} onRequestPasswordReset={onRequestPasswordReset} />;
 }

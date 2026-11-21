@@ -1,8 +1,14 @@
-import { apiRequest } from "./apiClient";
+import { API_URL, apiRequest } from "./apiClient";
 
 export async function getInstructorDashboard() {
   return apiRequest("/api/instructor/dashboard", {
     errorMessage: "Unable to load the instructor dashboard.",
+  });
+}
+
+export async function getInstructorCourses() {
+  return apiRequest("/api/instructor/courses", {
+    errorMessage: "Unable to load your courses.",
   });
 }
 
@@ -45,21 +51,61 @@ export async function uploadInstructorProjectRequirements(projectId, file) {
   })
 }
 
-export async function downloadInstructorProjectRequirements(projectId, fileName) {
-  const apiUrl = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "")
-  const response = await fetch(`${apiUrl}/api/instructor/projects/${projectId}/requirements`, {
+export async function fetchInstructorFile(path, errorMessage = "Unable to open file.") {
+  const response = await fetch(`${API_URL}${path}`, {
     credentials: "include",
   })
   if (!response.ok) {
     const data = await response.json().catch(() => ({}))
-    throw new Error(data.message || "Unable to download project requirements.")
+    throw new Error(data.message || errorMessage)
   }
-  const url = URL.createObjectURL(await response.blob())
+  return {
+    blob: await response.blob(),
+    contentType: response.headers.get("Content-Type") || "application/octet-stream",
+  }
+}
+
+export function saveFileBlob(blob, fileName) {
+  const url = URL.createObjectURL(blob)
   const link = document.createElement("a")
   link.href = url
-  link.download = fileName || "project-requirements.pdf"
+  link.download = fileName || "download"
   document.body.appendChild(link)
   link.click()
   link.remove()
   window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+export async function downloadInstructorProjectRequirements(projectId, fileName) {
+  const { blob } = await fetchInstructorFile(
+    `/api/instructor/projects/${projectId}/requirements?download=1`,
+    "Unable to download project requirements.",
+  )
+  saveFileBlob(blob, fileName || "project-requirements.pdf")
+}
+
+export async function getInstructorCourseStudents(courseId) {
+  return apiRequest(`/api/instructor/courses/${courseId}/students`, {
+    errorMessage: "Unable to load enrolled students.",
+  })
+}
+
+export async function getInstructorStudentProfile(studentId) {
+  return apiRequest(`/api/instructor/students/${studentId}`, {
+    errorMessage: "Unable to load the student profile.",
+  })
+}
+
+export async function getInstructorSubmissions() {
+  return apiRequest("/api/instructor/submissions", {
+    errorMessage: "Unable to load team submissions.",
+  })
+}
+
+export function instructorSubmissionFileUrl(submissionId, download = false) {
+  return `/api/instructor/submissions/${submissionId}/file${download ? "?download=1" : ""}`
+}
+
+export function instructorStudentAvatarUrl(studentId) {
+  return `/api/instructor/students/${studentId}/avatar`
 }

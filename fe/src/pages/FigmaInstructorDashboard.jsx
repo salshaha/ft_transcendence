@@ -1,5 +1,29 @@
-import { useState } from "react"
-import { createCourseProject, deleteInstructorProject, downloadInstructorProjectRequirements, getInstructorDashboard, getInstructorProjectTeams, updateInstructorProject, uploadInstructorProjectRequirements } from "../services/instructorService"
+import { useEffect, useState } from "react"
+import PasswordSecurityCard from "../components/auth/PasswordSecurityCard"
+import FilePreviewModal from "../components/instructor/FilePreviewModal"
+import PdfPreview from "../components/instructor/PdfPreview"
+import ProgressCharts from "../components/instructor/ProgressCharts"
+import { formatDate, statusTone } from "../components/instructor/formatters"
+import StudentProfileModal from "../components/instructor/StudentProfileModal"
+import SubmissionTimeline from "../components/instructor/SubmissionTimeline"
+import TaskDetailsModal from "../components/instructor/TaskDetailsModal"
+import {
+  createCourseProject,
+  deleteInstructorProject,
+  downloadInstructorProjectRequirements,
+  fetchInstructorFile,
+  getInstructorCourseStudents,
+  getInstructorCourses,
+  getInstructorDashboard,
+  getInstructorProjectTeams,
+  getInstructorSubmissions,
+  instructorStudentAvatarUrl,
+  instructorSubmissionFileUrl,
+  saveFileBlob,
+  updateInstructorProject,
+  uploadInstructorProjectRequirements,
+} from "../services/instructorService"
+import { listTasks } from "../services/taskService"
 
 const iconPaths = {
   grid: (
@@ -88,6 +112,23 @@ const iconPaths = {
     </>
   ),
   moon: <path d="M20.5 14.2A8 8 0 0 1 9.8 3.5 9 9 0 1 0 20.5 14.2Z" />,
+  chart: (
+    <>
+      <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+    </>
+  ),
+  clipboard: (
+    <>
+      <rect x="5" y="4" width="14" height="17" rx="2" />
+      <path d="M9 4V2h6v2M9 10h6M9 14h6M9 18h4" />
+    </>
+  ),
+  eye: (
+    <>
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
+      <circle cx="12" cy="12" r="3" />
+    </>
+  ),
 }
 
 function Icon({
@@ -112,9 +153,12 @@ function Icon({
 
 const navItems = [
   { label: "Overview", icon: "grid" },
-  { label: "My courses", icon: "book" },
-  { label: "Students", icon: "users" },
+  { label: "Courses", icon: "book" },
   { label: "Projects", icon: "file" },
+  { label: "Students", icon: "users" },
+  { label: "Tasks", icon: "clipboard" },
+  { label: "Progress Dashboard", icon: "chart" },
+  { label: "Submissions", icon: "file" },
   { label: "Settings", icon: "settings" },
 ]
 
@@ -248,70 +292,362 @@ function Sidebar({
   )
 }
 
-function CourseCard({ course, onOpen }) {
+function StudentAvatar({ student, className = "h-11 w-11" }) {
+  const [src, setSrc] = useState("")
+
+  useEffect(() => {
+    if (!student.profile_picture) {
+      setSrc("")
+      return undefined
+    }
+    let active = true
+    let objectUrl = ""
+    fetchInstructorFile(instructorStudentAvatarUrl(student.id), "Unable to load avatar.")
+      .then(({ blob }) => {
+        if (!active) return
+        objectUrl = URL.createObjectURL(blob)
+        setSrc(objectUrl)
+      })
+      .catch(() => {
+        if (active) setSrc("")
+      })
+    return () => {
+      active = false
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [student.id, student.profile_picture])
+
+  const initials = `${student.first_name?.[0] || ""}${student.last_name?.[0] || ""}`
+    .trim()
+    .toUpperCase()
+    .slice(0, 2) || "ST"
+
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt={`${student.full_name || "Student"} profile`}
+        className={`${className} shrink-0 rounded-xl border border-[#003C43]/10 object-cover`}
+      />
+    )
+  }
+
   return (
-    <button type="button" onClick={onOpen} className="theme-surface group flex min-w-[270px] flex-1 flex-col rounded-2xl border border-[#003C43]/8 bg-white p-5 text-left shadow-[0_8px_30px_rgba(0,60,67,0.05)] transition hover:-translate-y-1 hover:shadow-[0_14px_36px_rgba(0,60,67,0.10)]">
-      <div className="flex items-start justify-between">
-        <div
-          className="theme-icon grid h-11 w-11 place-items-center rounded-xl bg-[#E3FEF7] text-sm font-extrabold text-[#003C43]"
-        >
-          {(course.code || course.name).slice(0, 2).toUpperCase()}
+    <div className={`${className} grid shrink-0 place-items-center rounded-xl bg-[#E3FEF7] text-xs font-extrabold text-[#003C43]`}>
+      {initials}
+    </div>
+  )
+}
+
+function StudentCard({ student, onClick }) {
+  const skills = student.skills || []
+  return (
+    <button type="button" onClick={onClick} className="theme-surface rounded-xl border border-[#003C43]/10 bg-white p-4 text-left shadow-sm transition hover:border-[#77B0AA] hover:bg-[#f7fbfa]">
+      <div className="flex items-center gap-3">
+        <StudentAvatar student={student} />
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate font-bold text-[#003C43]">{student.full_name}</h3>
+          <p className="mt-0.5 truncate text-xs text-[#587376]">{student.email}</p>
+          <p className="mt-0.5 text-[10px] text-[#718b8d]">
+            {student.student_id || `User ${student.id}`}
+          </p>
         </div>
-        <span className="grid h-8 w-8 place-items-center rounded-lg text-[#77B0AA] transition group-hover:bg-[#E3FEF7] group-hover:text-[#003C43]" aria-hidden="true">
-          <Icon name="arrow" className="h-4 w-4" />
-        </span>
       </div>
-      <div className="mt-5 text-[10px] font-bold uppercase tracking-[0.14em] text-[#77B0AA]">
-        {course.code}
+      <div className="mt-3 flex items-center justify-between text-[11px] font-semibold text-[#365c60]">
+        <span>GPA {student.gpa ?? "—"}</span>
+        <span>{skills.length} {skills.length === 1 ? "skill" : "skills"}</span>
       </div>
-      <h3 className="mt-1 min-h-12 text-[17px] font-bold leading-6 text-[#003C43]">
-        {course.name}
-      </h3>
-      <div className="mt-4 border-t border-[#003C43]/7 pt-4">
-        <div>
+      {skills.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {skills.slice(0, 4).map((skill) => (
+            <span key={`${skill.skill_id}-${skill.name}`} className="rounded-full bg-[#E3FEF7] px-2 py-0.5 text-[9px] font-bold text-[#135D66]">
+              {skill.name}
+            </span>
+          ))}
+          {skills.length > 4 && (
+            <span className="rounded-full bg-[#f0f7f6] px-2 py-0.5 text-[9px] font-bold text-[#718b8d]">
+              +{skills.length - 4}
+            </span>
+          )}
+        </div>
+      )}
+    </button>
+  )
+}
+
+function CourseCard({ course, onOpen, onViewStudents }) {
+  return (
+    <article className="theme-surface group flex min-w-[270px] flex-1 flex-col rounded-2xl border border-[#003C43]/8 bg-white shadow-[0_8px_30px_rgba(0,60,67,0.05)] transition hover:-translate-y-1 hover:shadow-[0_14px_36px_rgba(0,60,67,0.10)]">
+      <button type="button" onClick={onOpen} className="flex flex-1 flex-col rounded-t-2xl p-5 text-left">
+        <div className="flex items-start justify-between">
+          <div className="theme-icon grid h-11 w-11 place-items-center rounded-xl bg-[#E3FEF7] text-sm font-extrabold text-[#003C43]">
+            {(course.code || course.name).slice(0, 2).toUpperCase()}
+          </div>
+          <span className="grid h-8 w-8 place-items-center rounded-lg text-[#77B0AA] transition group-hover:bg-[#E3FEF7] group-hover:text-[#003C43]" aria-hidden="true">
+            <Icon name="arrow" className="h-4 w-4" />
+          </span>
+        </div>
+        <div className="mt-5 text-[10px] font-bold uppercase tracking-[0.14em] text-[#77B0AA]">
+          {course.code}
+        </div>
+        <h3 className="mt-1 min-h-12 text-[17px] font-bold leading-6 text-[#003C43]">
+          {course.name}
+        </h3>
+        <div className="mt-4 border-t border-[#003C43]/7 pt-4">
           <div className="flex items-center gap-1.5 text-[11px] font-bold text-[#003C43]">
             <Icon name="users" className="h-3.5 w-3.5 text-[#77B0AA]" />
             {course.student_count}
           </div>
           <div className="mt-0.5 text-[9px] text-[#718b8d]">Students</div>
         </div>
+      </button>
+      <div className="border-t border-[#003C43]/7 px-5 py-3">
+        <button type="button" onClick={onViewStudents} className="flex items-center gap-1.5 text-xs font-bold text-[#135D66] transition hover:text-[#003C43]">
+          <Icon name="users" className="h-3.5 w-3.5" />
+          View Students
+        </button>
       </div>
-    </button>
+    </article>
   )
 }
 
-export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
+export default function FigmaInstructorDashboard({ dashboard, onLogout, onRequestPasswordReset }) {
   const [data, setData] = useState(dashboard)
   const [active, setActive] = useState("Overview")
   const [mobileOpen, setMobileOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [searchTerm, setSearchTerm] = useState("")
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [darkMode, setDarkMode] = useState(false)
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem("team-platform-theme") === "dark")
   const [projectEditor, setProjectEditor] = useState(null)
   const [projectError, setProjectError] = useState("")
+  const [formCourses, setFormCourses] = useState([])
+  const [loadingFormCourses, setLoadingFormCourses] = useState(false)
+  const [formCoursesError, setFormCoursesError] = useState("")
+  const [notice, setNotice] = useState("")
   const [savingProject, setSavingProject] = useState(false)
   const [selectedCourse, setSelectedCourse] = useState(null)
+  const [courseStudentsVisible, setCourseStudentsVisible] = useState(false)
   const [courseTeams, setCourseTeams] = useState([])
   const [loadingCourseTeams, setLoadingCourseTeams] = useState(false)
   const [courseTeamsError, setCourseTeamsError] = useState("")
+  const [courseStudents, setCourseStudents] = useState([])
+  const [loadingCourseStudents, setLoadingCourseStudents] = useState(false)
+  const [courseStudentsError, setCourseStudentsError] = useState("")
   const [projectFileError, setProjectFileError] = useState("")
-  const { instructor, courses, deadlines, students, projects, submissions, resources } = data
+  const [tasks, setTasks] = useState([])
+  const [loadingTasks, setLoadingTasks] = useState(false)
+  const [tasksError, setTasksError] = useState("")
+  const [projectCourseFilter, setProjectCourseFilter] = useState("all")
+  const [taskCourseFilter, setTaskCourseFilter] = useState("all")
+  const [taskProjectFilter, setTaskProjectFilter] = useState("all")
+  const [taskStatusFilter, setTaskStatusFilter] = useState("all")
+  const [selectedTask, setSelectedTask] = useState(null)
+  const [allSubmissions, setAllSubmissions] = useState([])
+  const [loadingSubmissions, setLoadingSubmissions] = useState(false)
+  const [submissionsError, setSubmissionsError] = useState("")
+  const [studentProfileId, setStudentProfileId] = useState(null)
+  const [pdfProject, setPdfProject] = useState(null)
+  const [previewFile, setPreviewFile] = useState(null)
+  const { instructor, courses, deadlines, students, projects, submissions, resources, progress } = data
+  const recentSubmissions = submissions?.items || []
+  const normalizedSearch = searchTerm.trim().toLowerCase()
+  const visibleStudents = students.filter((student) => {
+    if (!normalizedSearch) return true
+    const skills = (student.skills || []).map((skill) => skill.name || "").join(" ")
+    return [student.full_name, student.email, student.student_id, skills]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(normalizedSearch)
+  })
+  const visibleProjects = projectCourseFilter === "all" ? projects : projects.filter((project) => String(project.course?.id) === projectCourseFilter)
+  const selectedCourseProjects = projectsForCourse(selectedCourse)
+  const filteredTasks = tasks.filter((task) => {
+    if (taskCourseFilter !== "all" && String(task.course?.id) !== taskCourseFilter) return false
+    if (taskProjectFilter !== "all" && String(task.project?.id) !== taskProjectFilter) return false
+    if (taskStatusFilter !== "all" && task.status !== taskStatusFilter) return false
+    if (!normalizedSearch) return true
+    return [task.title, task.course?.name, task.project?.title, task.team?.name, task.assignee?.name]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(normalizedSearch)
+  })
+
+  function describeRequestError(error, fallback) {
+    const message = error?.message || fallback
+    if (/authentication required|unauthorized|session|sign in/i.test(message)) {
+      return "Your session has expired. Sign in again and retry."
+    }
+    return message
+  }
+
+  function projectsForCourse(course) {
+    if (!course) return []
+    const projectIds = course.project_ids || (course.projects || []).map((project) => project.id)
+    if (projectIds.length) {
+      const idSet = new Set(projectIds.map(String))
+      return projects.filter((project) => idSet.has(String(project.id)))
+    }
+    return projects.filter((project) => String(project.course?.id) === String(course.id))
+  }
+
+  useEffect(() => {
+    if (active !== "Tasks") return undefined
+    let activeRequest = true
+    setLoadingTasks(true)
+    setTasksError("")
+    listTasks()
+      .then((items) => {
+        if (activeRequest) setTasks(Array.isArray(items) ? items : [])
+      })
+      .catch((error) => {
+        if (activeRequest) setTasksError(error.message)
+      })
+      .finally(() => {
+        if (activeRequest) setLoadingTasks(false)
+      })
+    return () => {
+      activeRequest = false
+    }
+  }, [active, data])
+
+  useEffect(() => {
+    if (active !== "Submissions") return undefined
+    let activeRequest = true
+    setLoadingSubmissions(true)
+    setSubmissionsError("")
+    getInstructorSubmissions()
+      .then((response) => {
+        if (activeRequest) setAllSubmissions(response.submissions || [])
+      })
+      .catch((error) => {
+        if (activeRequest) setSubmissionsError(error.message)
+      })
+      .finally(() => {
+        if (activeRequest) setLoadingSubmissions(false)
+      })
+    return () => {
+      activeRequest = false
+    }
+  }, [active, data])
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", darkMode)
+    localStorage.setItem("team-platform-theme", darkMode ? "dark" : "light")
+  }, [darkMode])
+
+  useEffect(() => {
+    if (!projectEditor) {
+      setFormCourses([])
+      setFormCoursesError("")
+      setLoadingFormCourses(false)
+      return undefined
+    }
+    let activeRequest = true
+    setLoadingFormCourses(true)
+    setFormCoursesError("")
+    getInstructorCourses()
+      .then((response) => {
+        if (activeRequest) setFormCourses(Array.isArray(response.courses) ? response.courses : [])
+      })
+      .catch((error) => {
+        if (!activeRequest) return
+        const message = describeRequestError(error, "Unable to load your courses.")
+        setFormCoursesError(message)
+        setProjectError(message)
+      })
+      .finally(() => {
+        if (activeRequest) setLoadingFormCourses(false)
+      })
+    return () => {
+      activeRequest = false
+    }
+  }, [projectEditor?.id])
+
+  async function refreshDashboard() {
+    const refreshed = await getInstructorDashboard()
+    setData(refreshed)
+    return refreshed
+  }
+
+  async function loadCourseDetails(course) {
+    setCourseTeams([])
+    setCourseStudents([])
+    setCourseTeamsError("")
+    setCourseStudentsError("")
+    setLoadingCourseTeams(true)
+    setLoadingCourseStudents(true)
+    const courseProjects = course.projects || []
+    const projectIds = Array.from(new Set(course.project_ids || courseProjects.map((project) => project.id)))
+    const requests = [getInstructorCourseStudents(course.id), ...projectIds.map((projectId) => getInstructorProjectTeams(projectId))]
+    try {
+      const [studentResponse, ...teamResponses] = await Promise.all(requests)
+      setCourseStudents(studentResponse.students || [])
+      setCourseTeams(
+        teamResponses.flatMap((response, index) => {
+          const projectId = projectIds[index]
+          const projectTitle = courseProjects.find((project) => project.id === projectId)?.title || projects.find((project) => project.id === projectId)?.title || `Project ${projectId}`
+          return (response.teams || []).map((team) => ({ ...team, project_id: projectId, project_title: projectTitle }))
+        }),
+      )
+    } catch (error) {
+      setCourseStudentsError(error.message)
+      if (projectIds.length) setCourseTeamsError(error.message)
+    } finally {
+      setLoadingCourseStudents(false)
+      setLoadingCourseTeams(false)
+    }
+  }
 
   async function openCourse(course) {
     setSelectedCourse(course)
-    setCourseTeams([])
-    setCourseTeamsError("")
+    setCourseStudentsVisible(false)
     setProjectFileError("")
     setActive("Course details")
-    if (!course.project_id) return
-    setLoadingCourseTeams(true)
+    await loadCourseDetails(course)
+  }
+
+  async function viewCourseStudents(course) {
+    setSelectedCourse(course)
+    setCourseStudentsVisible(true)
+    setProjectFileError("")
+    setActive("Course details")
+    await loadCourseDetails(course)
+  }
+
+  async function openTaskById(taskId) {
     try {
-      const response = await getInstructorProjectTeams(course.project_id)
-      setCourseTeams(response.teams || [])
+      const found = tasks.find((task) => task.id === taskId)
+      const loaded = found || (await listTasks())
+      const task = Array.isArray(loaded) ? loaded.find((item) => item.id === taskId) : loaded
+      if (task) setSelectedTask(task)
     } catch (error) {
-      setCourseTeamsError(error.message)
-    } finally {
-      setLoadingCourseTeams(false)
+      setTasksError(error.message)
+      setActive("Tasks")
+    }
+  }
+
+  function previewSubmission(submission) {
+    setPreviewFile({
+      submission,
+      path: instructorSubmissionFileUrl(submission.id),
+      title: `${submission.team_name || "Team"} · ${submission.project_title || "Submission"}`,
+      fileName: submission.file?.original_name || "submission",
+      downloadPath: instructorSubmissionFileUrl(submission.id, true),
+    })
+  }
+
+  async function downloadSubmission(submission) {
+    try {
+      const { blob } = await fetchInstructorFile(
+        instructorSubmissionFileUrl(submission.id, true),
+        "Unable to download submission.",
+      )
+      saveFileBlob(blob, submission.file?.original_name || "submission")
+    } catch (error) {
+      setSubmissionsError(error.message)
     }
   }
 
@@ -319,7 +655,7 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
     setProjectError("")
     setProjectEditor({
       id: project?.id ?? null,
-      courseId: String(project?.course?.id ?? courseId),
+      courseId: project?.course?.id ?? (courseId === "" ? "" : Number(courseId)),
       title: project?.title ?? "",
       description: project?.description ?? "",
       min_members_per_team: project?.min_members_per_team ?? 2,
@@ -332,13 +668,55 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
 
   async function saveProject(event) {
     event.preventDefault()
-    setSavingProject(true)
     setProjectError("")
+    setNotice("")
     const { id, courseId, requirementsFile, requirementsName, ...fields } = projectEditor
+    const minMembers = Number(fields.min_members_per_team)
+    const maxMembers = Number(fields.max_members_per_team)
+    const selectedCourseInfo = formCourses.find((course) => String(course.id) === String(courseId))
+
+    if (!fields.title.trim()) {
+      setProjectError("Project title is required.")
+      return
+    }
+    if (!id) {
+      if (loadingFormCourses) {
+        setProjectError("Courses are still loading. Please wait and try again.")
+        return
+      }
+      if (formCoursesError) {
+        setProjectError(formCoursesError)
+        return
+      }
+      if (formCourses.length === 0) {
+        setProjectError("No courses are assigned to your account.")
+        return
+      }
+      if (!courseId || !selectedCourseInfo) {
+        setProjectError("Select a valid course from your courses.")
+        return
+      }
+    }
+    if (!Number.isInteger(minMembers) || minMembers < 1) {
+      setProjectError("Minimum team size must be at least 1.")
+      return
+    }
+    if (!Number.isInteger(maxMembers) || maxMembers < minMembers) {
+      setProjectError("Maximum team size must be greater than or equal to minimum team size.")
+      return
+    }
+    if (!id && !requirementsFile && !requirementsName) {
+      setProjectError("Upload the project requirements PDF.")
+      return
+    }
+
+    setSavingProject(true)
     const payload = {
       ...fields,
-      min_members_per_team: Number(fields.min_members_per_team),
-      max_members_per_team: Number(fields.max_members_per_team),
+      course_id: courseId === "" ? null : Number(courseId),
+      title: fields.title.trim(),
+      min_members_per_team: minMembers,
+      max_members_per_team: maxMembers,
       deadline: fields.deadline || null,
     }
     let savedProjectId = id
@@ -352,28 +730,24 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
       if (requirementsFile) {
         await uploadInstructorProjectRequirements(savedProjectId, requirementsFile)
       }
-      const refreshed = await getInstructorDashboard()
-      setData(refreshed)
+      const refreshed = await refreshDashboard()
       if (selectedCourse) {
         const refreshedCourse = refreshed.courses.find((course) => course.id === selectedCourse.id) || selectedCourse
         setSelectedCourse(refreshedCourse)
-        if (refreshedCourse.project_id) {
-          const teamResponse = await getInstructorProjectTeams(refreshedCourse.project_id)
-          setCourseTeams(teamResponse.teams || [])
-        }
+        await loadCourseDetails(refreshedCourse)
       }
       setProjectEditor(null)
+      setNotice(id ? "Project updated successfully." : "Project added successfully.")
     } catch (error) {
       if (savedProjectId && !id) {
         setProjectEditor({ ...projectEditor, id: savedProjectId })
-        const refreshed = await getInstructorDashboard().catch(() => null)
+        const refreshed = await refreshDashboard().catch(() => null)
         if (refreshed) {
-          setData(refreshed)
           const refreshedCourse = refreshed.courses.find((course) => course.id === Number(courseId))
           if (refreshedCourse) setSelectedCourse(refreshedCourse)
         }
       }
-      setProjectError(error.message)
+      setProjectError(describeRequestError(error, "Unable to save the project."))
     } finally {
       setSavingProject(false)
     }
@@ -390,15 +764,14 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
     setProjectError("")
     try {
       await deleteInstructorProject(projectEditor.id)
-      const refreshed = await getInstructorDashboard()
-      setData(refreshed)
+      const refreshed = await refreshDashboard()
       if (selectedCourse) {
         const refreshedCourse = refreshed.courses.find((course) => course.id === selectedCourse.id) || selectedCourse
         setSelectedCourse(refreshedCourse)
-        setCourseTeams([])
-        setCourseTeamsError("")
+        await loadCourseDetails(refreshedCourse)
       }
       setProjectEditor(null)
+      setNotice("Project deleted successfully.")
     } catch (error) {
       setProjectError(error.message)
     } finally {
@@ -411,7 +784,10 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
       <div className="theme-page min-h-screen bg-[#f5faf9] text-[#183f43] transition-colors duration-300">
         <Sidebar
           active={active}
-          onSelect={setActive}
+          onSelect={(page) => {
+            setActive(page)
+            setNotice("")
+          }}
           open={mobileOpen}
           onClose={() => setMobileOpen(false)}
           collapsed={sidebarCollapsed}
@@ -449,7 +825,9 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
                 <Icon name="search" className="h-4 w-4 text-[#77B0AA]" />
                 <input
                   className="w-full bg-transparent px-3 py-2.5 text-sm text-[#003C43] outline-none placeholder:text-[#7d999b]"
-                  placeholder="Search courses..."
+                  placeholder="Search courses, students, tasks..."
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
                   autoFocus={searchOpen}
                 />
               </div>
@@ -496,6 +874,11 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
           </header>
 
           <div className="mx-auto max-w-[1500px] p-4 sm:p-8 lg:p-10">
+            {notice && (
+              <p className="mb-5 rounded-xl border border-[#135D66]/15 bg-[#E3FEF7] px-4 py-3 text-sm font-semibold text-[#135D66]" role="status">
+                {notice}
+              </p>
+            )}
             {active === "Overview" ? (
               <>
             <section className="relative overflow-hidden rounded-[24px] bg-[#135D66] px-6 py-7 text-white shadow-[0_12px_35px_rgba(0,60,67,0.14)] sm:px-9 sm:py-8">
@@ -521,12 +904,31 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <button disabled title="Project creation is not available yet" className="theme-invert flex w-fit cursor-not-allowed items-center gap-2 rounded-xl bg-[#E3FEF7] px-4 py-2.5 text-xs font-bold text-[#003C43] opacity-60">
-                    Create new project <Icon name="arrow" className="h-4 w-4" />
+                  <button onClick={() => openProjectEditor(null)} className="theme-invert flex w-fit items-center gap-2 rounded-xl bg-[#E3FEF7] px-4 py-2.5 text-xs font-bold text-[#003C43] transition hover:bg-white">
+                    Add Project <Icon name="arrow" className="h-4 w-4" />
                   </button>
                 </div>
               </div>
             </section>
+
+            {progress && (
+              <section className="mt-8">
+                <div className="mb-4 flex items-end justify-between">
+                  <div>
+                    <h2 className="text-xl font-bold tracking-tight text-[#003C43]">
+                      Progress overview
+                    </h2>
+                    <p className="mt-1 text-xs text-[#6d898b]">
+                      Live completion, submission, and risk metrics from your courses
+                    </p>
+                  </div>
+                  <button onClick={() => setActive("Progress Dashboard")} className="flex items-center gap-1 text-xs font-bold text-[#135D66] transition hover:text-[#003C43]">
+                    View details <Icon name="chevron" className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <ProgressCharts progress={progress} />
+              </section>
+            )}
 
             <section className="mt-8">
               <div className="mb-4 flex items-end justify-between">
@@ -540,13 +942,18 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
                       : "Your assigned courses"}
                   </p>
                 </div>
-                <button onClick={() => setActive("My courses")} className="flex items-center gap-1 text-xs font-bold text-[#135D66] transition hover:text-[#003C43]">
+                <button onClick={() => setActive("Courses")} className="flex items-center gap-1 text-xs font-bold text-[#135D66] transition hover:text-[#003C43]">
                   View all <Icon name="chevron" className="h-3.5 w-3.5" />
                 </button>
               </div>
               <div className="flex gap-4 overflow-x-auto pb-3">
                 {courses.map((course) => (
-                  <CourseCard key={course.id} course={course} onOpen={() => openCourse(course)} />
+                  <CourseCard
+                    key={course.id}
+                    course={course}
+                    onOpen={() => openCourse(course)}
+                    onViewStudents={() => viewCourseStudents(course)}
+                  />
                 ))}
                 {courses.length === 0 && (
               <p className="text-xs text-[#6d898b]">No courses are assigned to your account.</p>
@@ -612,6 +1019,7 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
                       <button
                         className="text-[#77B0AA] hover:text-[#003C43]"
                         aria-label={`Open ${item.title}`}
+                        onClick={() => openTaskById(item.id)}
                       >
                         <Icon name="chevron" className="h-4 w-4" />
                       </button>
@@ -634,48 +1042,45 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
                       Give feedback and grade student work
                     </p>
                   </div>
-                  <span className="rounded-full bg-[#E3FEF7] px-2.5 py-1 text-[10px] font-bold text-[#135D66]">
-                    {submissions.items.length} new
-                  </span>
+                  <button onClick={() => setActive("Submissions")} className="rounded-full bg-[#E3FEF7] px-2.5 py-1 text-[10px] font-bold text-[#135D66]">
+                    {recentSubmissions.length} recent
+                  </button>
                 </div>
                 <div className="divide-y divide-[#003C43]/7">
-                  {submissions.items.map((submission) => (
+                  {recentSubmissions.map((submission) => (
                     <article
                       key={submission.id}
                       className="flex items-center gap-3 py-4 first:pt-1 last:pb-0"
                     >
                       <div className="theme-invert grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-[#77B0AA] text-xs font-extrabold text-[#003C43]">
-                        {submission.name.split(" ").map((part) => part[0]).join("").slice(0, 2)}
+                        {(submission.team_name || "T").slice(0, 2).toUpperCase()}
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-bold text-[#18484d]">
-                          {submission.name}
+                          {submission.team_name || "Team"}
                         </div>
                         <div className="mt-1 truncate text-[10px] text-[#718b8d]">
-                          {submission.assignment} · {submission.course}
+                          {submission.project_title || "Project"} · {submission.course_name || "Course"}
                         </div>
                         <div className="mt-2 flex items-center gap-2 text-[9px] font-semibold text-[#77B0AA]">
-                          <span>{submission.submitted}</span>
+                          <span>{submission.submitter_name || "Unknown"}</span>
                           <span className="h-1 w-1 rounded-full bg-[#77B0AA]" />
-                          <span
-                            className={
-                              submission.status === "Late"
-                                ? "text-[#b66b4d]"
-                                : ""
-                            }
-                          >
-                            {submission.status}
+                          <span className={submission.status === "late" ? "text-[#b66b4d]" : ""}>
+                            {submission.status.replaceAll("_", " ")}
                           </span>
                         </div>
                       </div>
-                      <button className="rounded-lg bg-[#E3FEF7] px-3 py-2 text-[10px] font-bold text-[#135D66] transition hover:bg-[#77B0AA] hover:text-[#003C43]">
-                        Review
+                      <button
+                        onClick={() => previewSubmission(submission)}
+                        className="rounded-lg bg-[#E3FEF7] px-3 py-2 text-[10px] font-bold text-[#135D66] transition hover:bg-[#77B0AA] hover:text-[#003C43]"
+                      >
+                        Preview
                       </button>
                     </article>
                   ))}
-                  {submissions.items.length === 0 && (
+                  {recentSubmissions.length === 0 && (
                     <p className="py-4 text-xs text-[#6d898b]">
-                      {submissions.available ? "No submissions to review." : submissions.reason}
+                      {submissions?.available ? "No submissions to review." : submissions?.reason}
                     </p>
                   )}
                 </div>
@@ -684,72 +1089,315 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout }) {
               </>
             ) : active === "Course details" && selectedCourse ? (
               <section className="space-y-6">
-                <button onClick={() => setActive("My courses")} className="text-xs font-bold text-[#135D66] hover:text-[#003C43]">← Back to my courses</button>
+                <button onClick={() => setActive("Courses")} className="text-xs font-bold text-[#135D66] hover:text-[#003C43]">← Back to courses</button>
                 <div className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
                   <div className="flex flex-wrap items-start justify-between gap-4">
                     <div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#77B0AA]">{selectedCourse.code || "Course"} · {selectedCourse.semester} {selectedCourse.academic_year}</p><h1 className="mt-1 text-2xl font-bold text-[#003C43]">{selectedCourse.name}</h1><p className="mt-2 text-xs text-[#6d898b]">{selectedCourse.student_count} enrolled students</p></div>
-                    {selectedCourse.project_id ? <button onClick={() => { const project = projects.find((item) => item.id === selectedCourse.project_id); if (project) openProjectEditor(project) }} className="rounded-xl bg-[#135D66] px-4 py-2.5 text-xs font-bold text-white">Edit project</button> : <button onClick={() => openProjectEditor(null, selectedCourse.id)} className="rounded-xl bg-[#135D66] px-4 py-2.5 text-xs font-bold text-white">Create project</button>}
+                    <div className="flex flex-wrap gap-2">
+                      <button onClick={() => openProjectEditor(null, selectedCourse.id)} className="rounded-xl bg-[#135D66] px-4 py-2.5 text-xs font-bold text-white">{selectedCourseProjects.length ? "Create another project" : "Create project"}</button>
+                    </div>
                   </div>
-                  {selectedCourse.project_id ? (() => { const project = projects.find((item) => item.id === selectedCourse.project_id); return project ? <div className="mt-5 rounded-xl bg-[#f0f7f6] p-4"><h2 className="font-bold text-[#003C43]">{project.title || "Course project"}</h2><p className="mt-1 text-xs text-[#587376]">Teams of {project.min_members_per_team}–{project.max_members_per_team} · {project.team_count} teams</p>{project.description && <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[#365c60]">{project.description}</p>}<div className="mt-4 flex flex-wrap items-center gap-3">{project.requirements ? <><span className="text-sm font-semibold text-[#365c60]">Requirements file: {project.requirements.original_name}</span><button type="button" onClick={async () => { setProjectFileError(""); try { await downloadInstructorProjectRequirements(project.id, project.requirements.original_name) } catch (error) { setProjectFileError(error.message) } }} className="rounded-lg border border-[#135D66]/20 px-3 py-2 text-xs font-bold text-[#135D66]">Download file</button></> : <span className="text-sm text-[#718b8d]">No requirements file uploaded yet.</span>}</div>{projectFileError && <p className="mt-2 text-xs text-[#a94646]" role="alert">{projectFileError}</p>}</div> : null })() : <p className="mt-5 rounded-xl bg-[#f0f7f6] p-4 text-sm text-[#587376]">No project has been added to this course yet. Create one and attach its requirements file.</p>}
+                  <div className="mt-5">
+                    <h2 className="text-sm font-bold text-[#003C43]">Projects in this course ({selectedCourseProjects.length})</h2>
+                    {selectedCourseProjects.length ? (
+                      <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        {selectedCourseProjects.map((project) => (
+                          <article key={project.id} className="rounded-xl bg-[#f0f7f6] p-4">
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div>
+                                <h3 className="font-bold text-[#003C43]">{project.title || "Untitled project"}</h3>
+                                <p className="mt-1 text-xs text-[#587376]">Teams of {project.min_members_per_team}–{project.max_members_per_team} · {project.team_count} teams · {formatDate(project.deadline)}</p>
+                              </div>
+                              <button type="button" onClick={() => openProjectEditor(project)} className="rounded-lg bg-[#135D66] px-3 py-2 text-[11px] font-bold text-white">Manage</button>
+                            </div>
+                            {project.description && <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[#365c60]">{project.description}</p>}
+                            <div className="mt-4 flex flex-wrap items-center gap-3">
+                              {project.requirements ? (
+                                <>
+                                  <span className="text-sm font-semibold text-[#365c60]">Requirements: {project.requirements.original_name}</span>
+                                  <button type="button" onClick={() => setPdfProject(project)} className="rounded-lg border border-[#135D66]/20 px-3 py-2 text-xs font-bold text-[#135D66]">Preview file</button>
+                                  <button type="button" onClick={async () => { setProjectFileError(""); try { await downloadInstructorProjectRequirements(project.id, project.requirements.original_name) } catch (error) { setProjectFileError(error.message) } }} className="rounded-lg border border-[#135D66]/20 px-3 py-2 text-xs font-bold text-[#135D66]">Download file</button>
+                                </>
+                              ) : <span className="text-sm text-[#718b8d]">No requirements file uploaded yet.</span>}
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    ) : <p className="mt-3 rounded-xl bg-[#f0f7f6] p-4 text-sm text-[#587376]">No project has been added to this course yet. Create one and attach its requirements file.</p>}
+                    {projectFileError && <p className="mt-2 text-xs text-[#a94646]" role="alert">{projectFileError}</p>}
+                  </div>
+                </div>
+                <div className={`theme-surface rounded-2xl border bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6 ${courseStudentsVisible ? "border-[#77B0AA] ring-2 ring-[#77B0AA]/20" : "border-[#003C43]/8"}`}>
+                  <div className="flex flex-wrap items-end justify-between gap-3">
+                    <div>
+                      <h2 className="text-lg font-bold text-[#003C43]">Students in this course</h2>
+                      <p className="mt-1 text-xs text-[#6d898b]">Loaded with course ID {selectedCourse.id}; students from other courses are excluded.</p>
+                    </div>
+                    <button type="button" onClick={() => loadCourseDetails(selectedCourse)} className="rounded-lg border border-[#135D66]/20 px-3 py-2 text-xs font-bold text-[#135D66]">Refresh</button>
+                  </div>
+                  {loadingCourseStudents ? <p className="mt-4 text-sm text-[#6d898b]">Loading students…</p> : courseStudentsError ? <p className="mt-4 text-sm text-[#a94646]" role="alert">{courseStudentsError}</p> : courseStudents.length ? <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{courseStudents.map((student) => <StudentCard key={student.id} student={student} onClick={() => setStudentProfileId(student.id)} />)}</div> : <p className="mt-4 rounded-xl bg-[#f0f7f6] p-4 text-sm text-[#587376]">No students are enrolled in this course.</p>}
                 </div>
                 <div className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
                   <h2 className="text-lg font-bold text-[#003C43]">Project teams</h2>
-                  <p className="mt-1 text-xs text-[#6d898b]">Teams and enrolled members for this course project</p>
-                  {loadingCourseTeams ? <p className="mt-4 text-sm text-[#6d898b]">Loading teams…</p> : courseTeamsError ? <p className="mt-4 text-sm text-[#a94646]" role="alert">{courseTeamsError}</p> : courseTeams.length ? <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{courseTeams.map((team) => <article key={team.id} className="rounded-xl border border-[#003C43]/10 bg-[#f7fbfa] p-4"><div className="flex items-center justify-between gap-2"><h3 className="font-bold text-[#003C43]">{team.name}</h3><span className="rounded-full bg-[#E3FEF7] px-2 py-1 text-[10px] font-bold text-[#135D66]">{team.status.replaceAll("_", " ")}</span></div><p className="mt-1 text-xs text-[#6d898b]">{team.member_count} {team.member_count === 1 ? "member" : "members"}</p><ul className="mt-3 space-y-1.5">{team.members.map((member) => <li key={member.student_id} className="text-sm text-[#365c60]">{member.name}{member.student_id === team.leader_id ? <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-[#77B0AA]">Leader</span> : null}</li>)}</ul></article>)}</div> : <p className="mt-4 rounded-xl bg-[#f0f7f6] p-4 text-sm text-[#587376]">{selectedCourse.project_id ? "No teams have joined this project yet." : "Teams will appear here after a project is created and students form teams."}</p>}
+                  <p className="mt-1 text-xs text-[#6d898b]">Teams and enrolled members across all projects in this course</p>
+                  {loadingCourseTeams ? <p className="mt-4 text-sm text-[#6d898b]">Loading teams…</p> : courseTeamsError ? <p className="mt-4 text-sm text-[#a94646]" role="alert">{courseTeamsError}</p> : courseTeams.length ? <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{courseTeams.map((team) => <article key={team.id} className="rounded-xl border border-[#003C43]/10 bg-[#f7fbfa] p-4"><div className="flex items-center justify-between gap-2"><h3 className="font-bold text-[#003C43]">{team.name}</h3><span className="rounded-full bg-[#E3FEF7] px-2 py-1 text-[10px] font-bold text-[#135D66]">{team.status.replaceAll("_", " ")}</span></div><p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-[#135D66]">{team.project_title || `Project ${team.project_id}`}</p><p className="mt-1 text-xs text-[#6d898b]">{team.member_count} {team.member_count === 1 ? "member" : "members"}</p><ul className="mt-3 space-y-1.5">{team.members.map((member) => <li key={member.student_id} className="text-sm text-[#365c60]">{member.name}{member.student_id === team.leader_id ? <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-[#77B0AA]">Leader</span> : null}</li>)}</ul></article>)}</div> : <p className="mt-4 rounded-xl bg-[#f0f7f6] p-4 text-sm text-[#587376]">{selectedCourseProjects.length ? "No teams have joined these projects yet." : "Teams will appear here after a project is created and students form teams."}</p>}
                 </div>
               </section>
-            ) : active === "My courses" ? (
+            ) : active === "Courses" ? (
               <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
-                <h1 className="text-xl font-bold text-[#003C43]">My courses</h1>
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                  <div>
+                    <h1 className="text-xl font-bold text-[#003C43]">Courses</h1>
+                    <p className="mt-1 text-xs text-[#6d898b]">Open a course or view only its enrolled students.</p>
+                  </div>
+                  <button onClick={() => openProjectEditor(null)} className="rounded-xl bg-[#135D66] px-4 py-2.5 text-xs font-bold text-white">Add Project</button>
+                </div>
                 <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {courses.map((course) => (
-                    <button type="button" onClick={() => openCourse(course)} key={course.id} className="theme-surface rounded-xl bg-[#f0f7f6] p-4 text-left transition hover:bg-[#E3FEF7]">
-                      <h2 className="font-bold text-[#003C43]">{course.name}</h2>
-                      <p className="mt-1 text-xs text-[#6d898b]">{course.code || "Course code unavailable"}</p>
-                      <p className="mt-3 text-xs text-[#587376]">{course.student_count} enrolled students</p>
-                    </button>
+                    <CourseCard
+                      key={course.id}
+                      course={course}
+                      onOpen={() => openCourse(course)}
+                      onViewStudents={() => viewCourseStudents(course)}
+                    />
                   ))}
                 </div>
                 {courses.length === 0 && <p className="mt-4 text-xs text-[#6d898b]">No courses are assigned to your account.</p>}
               </section>
+            ) : active === "Projects" ? (
+              <section className="space-y-6">
+                <div className="theme-surface flex flex-wrap items-end justify-between gap-3 rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
+                  <div>
+                    <h1 className="text-xl font-bold text-[#003C43]">Projects</h1>
+                    <p className="mt-1 text-xs text-[#6d898b]">{projects.length} project{projects.length === 1 ? "" : "s"} across your courses</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="text-xs font-semibold text-[#365c60]">Filter by course
+                      <select value={projectCourseFilter} onChange={(event) => setProjectCourseFilter(event.target.value)} className="mt-1 w-full rounded-lg border border-[#003C43]/15 bg-white p-2 text-xs">
+                        <option value="all">All courses</option>
+                        {courses.map((course) => <option key={course.id} value={course.id}>{course.name}{course.projects?.length ? ` (${course.projects.length})` : ""}</option>)}
+                      </select>
+                    </label>
+                    <button onClick={() => openProjectEditor(null)} className="rounded-xl bg-[#135D66] px-4 py-2.5 text-xs font-bold text-white">Add Project</button>
+                  </div>
+                </div>
+                <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+                  {visibleProjects.map((project) => {
+                    const course = courses.find((item) => item.id === project.course?.id)
+                    return (
+                      <article key={project.id} className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)]">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#77B0AA]">{project.course?.name || "Course"}</p>
+                            <h2 className="mt-1 text-lg font-bold text-[#003C43]">{project.title || "Untitled project"}</h2>
+                          </div>
+                          <span className="rounded-full bg-[#E3FEF7] px-2.5 py-1 text-[10px] font-bold text-[#135D66]">{project.team_count} teams</span>
+                        </div>
+                        {project.description && <p className="mt-3 line-clamp-3 text-xs leading-5 text-[#587376]">{project.description}</p>}
+                        <div className="mt-4 space-y-1 text-[11px] text-[#587376]">
+                          <p>Team size: {project.min_members_per_team}–{project.max_members_per_team}</p>
+                          <p>Deadline: {formatDate(project.deadline)}</p>
+                          <p>Requirements: {project.requirements?.original_name || "Not uploaded"}</p>
+                        </div>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <button type="button" onClick={() => openProjectEditor(project)} className="rounded-lg border border-[#135D66]/20 px-3 py-2 text-[11px] font-bold text-[#135D66]">Edit</button>
+                          {project.requirements && <button type="button" onClick={() => setPdfProject(project)} className="rounded-lg border border-[#135D66]/20 px-3 py-2 text-[11px] font-bold text-[#135D66]">Preview PDF</button>}
+                          {course && <button type="button" onClick={() => viewCourseStudents(course)} className="rounded-lg border border-[#135D66]/20 px-3 py-2 text-[11px] font-bold text-[#135D66]">View Students</button>}
+                          <button type="button" onClick={() => setActive("Tasks")} className="rounded-lg bg-[#E3FEF7] px-3 py-2 text-[11px] font-bold text-[#135D66]">Tasks</button>
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+                {visibleProjects.length === 0 && <p className="rounded-2xl border border-[#003C43]/8 bg-white p-5 text-sm text-[#6d898b]">{projectCourseFilter === "all" ? "No projects have been added yet. Use Add Project to create one." : "No projects have been added to this course yet."}</p>}
+              </section>
             ) : active === "Students" ? (
               <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
-                <h1 className="text-xl font-bold text-[#003C43]">Students</h1>
-                <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {students.map((student) => (
-                    <article key={student.id} className="theme-surface rounded-xl border border-[#003C43]/10 bg-white p-4 shadow-sm">
-                      <h2 className="font-bold text-[#003C43]">{student.full_name}</h2>
-                      <p className="mt-1 text-xs font-medium text-[#365c60]">{student.email}</p>
-                    </article>
-                  ))}
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                  <div>
+                    <h1 className="text-xl font-bold text-[#003C43]">Students</h1>
+                    <p className="mt-1 text-xs text-[#6d898b]">All students enrolled in your courses. Select a student for the full profile.</p>
+                  </div>
+                  <span className="rounded-full bg-[#E3FEF7] px-3 py-1 text-[10px] font-bold text-[#135D66]">{visibleStudents.length} shown</span>
                 </div>
-                {students.length === 0 && <p className="mt-4 text-xs text-[#6d898b]">No enrolled students were found.</p>}
+                <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {visibleStudents.map((student) => <StudentCard key={student.id} student={student} onClick={() => setStudentProfileId(student.id)} />)}
+                </div>
+                {visibleStudents.length === 0 && <p className="mt-4 text-xs text-[#6d898b]">No enrolled students match the current search.</p>}
               </section>
-            ) : active === "Resources" ? (
+            ) : active === "Tasks" ? (
               <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
-                <h1 className="text-xl font-bold text-[#003C43]">Resources</h1>
-                <p className="mt-4 text-xs text-[#6d898b]">{resources.available ? "No course resources have been added." : resources.reason}</p>
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                  <div>
+                    <h1 className="text-xl font-bold text-[#003C43]">Tasks</h1>
+                    <p className="mt-1 text-xs text-[#6d898b]">View team tasks and provide feedback. Students manage their own tasks.</p>
+                  </div>
+                  <span className="rounded-full bg-[#E3FEF7] px-3 py-1 text-[10px] font-bold text-[#135D66]">Read only</span>
+                </div>
+                <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                  <label className="text-xs font-semibold text-[#365c60]">Course
+                    <select value={taskCourseFilter} onChange={(event) => { setTaskCourseFilter(event.target.value); setTaskProjectFilter("all") }} className="mt-1 w-full rounded-lg border border-[#003C43]/15 bg-white p-2.5 text-sm">
+                      <option value="all">All courses</option>
+                      {courses.map((course) => <option key={course.id} value={course.id}>{course.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-xs font-semibold text-[#365c60]">Project
+                    <select value={taskProjectFilter} onChange={(event) => setTaskProjectFilter(event.target.value)} className="mt-1 w-full rounded-lg border border-[#003C43]/15 bg-white p-2.5 text-sm">
+                      <option value="all">All projects</option>
+                      {(taskCourseFilter === "all" ? projects : projects.filter((project) => String(project.course?.id) === taskCourseFilter)).map((project) => <option key={project.id} value={project.id}>{project.title || `Project ${project.id}`}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-xs font-semibold text-[#365c60]">Status
+                    <select value={taskStatusFilter} onChange={(event) => setTaskStatusFilter(event.target.value)} className="mt-1 w-full rounded-lg border border-[#003C43]/15 bg-white p-2.5 text-sm">
+                      <option value="all">All statuses</option>
+                      <option value="todo">To do</option>
+                      <option value="in_progress">In progress</option>
+                      <option value="review">Review</option>
+                      <option value="done">Done</option>
+                    </select>
+                  </label>
+                </div>
+                {loadingTasks ? <p className="mt-5 text-sm text-[#6d898b]">Loading tasks…</p> : tasksError ? <p className="mt-5 text-sm text-[#a94646]" role="alert">{tasksError}</p> : filteredTasks.length ? (
+                  <div className="mt-5 overflow-x-auto">
+                    <table className="w-full min-w-[900px] text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-[#003C43]/10 text-[10px] font-bold uppercase tracking-[0.12em] text-[#77B0AA]">
+                          <th className="py-3 pr-4">Task</th>
+                          <th className="py-3 pr-4">Course / project</th>
+                          <th className="py-3 pr-4">Assignee</th>
+                          <th className="py-3 pr-4">Status</th>
+                          <th className="py-3 pr-4">Due</th>
+                          <th className="py-3 pr-4">Activity</th>
+                          <th className="py-3"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#003C43]/7">
+                        {filteredTasks.map((task) => (
+                          <tr key={task.id}>
+                            <td className="py-3 pr-4"><div className="font-bold text-[#003C43]">{task.title}</div><div className="text-[10px] text-[#718b8d]">{task.team?.name || "No team"}</div></td>
+                            <td className="py-3 pr-4 text-xs text-[#587376]"><div>{task.course?.name || "—"}</div><div className="text-[10px]">{task.project?.title || "—"}</div></td>
+                            <td className="py-3 pr-4 text-xs text-[#587376]">{task.assignee?.name || <span className="italic text-[#718b8d]">Unassigned</span>}</td>
+                            <td className="py-3 pr-4"><span className={`rounded-md px-2 py-1 text-[10px] font-bold uppercase ${statusTone(task.status)}`}>{task.status.replaceAll("_", " ")}</span></td>
+                            <td className="py-3 pr-4 text-xs text-[#587376]">{formatDate(task.due_date)}</td>
+                            <td className="py-3 pr-4 text-[10px] text-[#718b8d]">{task.comment_count || 0} comments · {task.attachment_count || 0} files</td>
+                            <td className="py-3"><button type="button" onClick={() => setSelectedTask(task)} className="rounded-lg bg-[#E3FEF7] px-3 py-2 text-[10px] font-bold text-[#135D66]">Open</button></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : <p className="mt-5 rounded-xl bg-[#f0f7f6] p-4 text-sm text-[#587376]">No tasks match the current filters.</p>}
               </section>
+            ) : active === "Progress Dashboard" ? (
+              <section className="space-y-6">
+                <div className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
+                  <h1 className="text-xl font-bold text-[#003C43]">Progress Dashboard</h1>
+                  <p className="mt-1 text-xs text-[#6d898b]">Live task, submission, GPA, and team-risk metrics from your courses and projects.</p>
+                </div>
+                <ProgressCharts progress={progress} />
+              </section>
+            ) : active === "Submissions" ? (
+              <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                  <div>
+                    <h1 className="text-xl font-bold text-[#003C43]">Submissions</h1>
+                    <p className="mt-1 text-xs text-[#6d898b]">Preview or download files submitted by your teams.</p>
+                  </div>
+                  <span className="rounded-full bg-[#E3FEF7] px-3 py-1 text-[10px] font-bold text-[#135D66]">{allSubmissions.length} total</span>
+                </div>
+                <div className="mt-5">
+                  {loadingSubmissions ? <p className="text-sm text-[#6d898b]">Loading submissions…</p> : submissionsError ? <p className="text-sm text-[#a94646]" role="alert">{submissionsError}</p> : <SubmissionTimeline submissions={allSubmissions} onView={previewSubmission} onDownload={downloadSubmission} onOpen={previewSubmission} />}
+                </div>
+              </section>
+            ) : active === "Settings" ? (
+              <div className="grid gap-5 xl:grid-cols-[1.25fr_0.75fr]">
+                <section className="theme-surface h-fit rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
+                  <h1 className="text-xl font-bold text-[#003C43]">Settings</h1>
+                  <p className="mt-4 text-xs text-[#6d898b]">Signed in as {instructor.email}</p>
+                </section>
+                <PasswordSecurityCard
+                  email={instructor.email}
+                  onRequestPasswordReset={onRequestPasswordReset}
+                />
+              </div>
             ) : (
-              <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
-                <h1 className="text-xl font-bold text-[#003C43]">Settings</h1>
-                <p className="mt-4 text-xs text-[#6d898b]">Instructor settings are not available yet.</p>
-                <p className="mt-2 text-xs text-[#6d898b]">Signed in as {instructor.email}</p>
+              <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 text-sm text-[#6d898b]">
+                This page is not available.
               </section>
             )}
             {projectEditor && (
               <div className="fixed inset-0 z-[80] grid place-items-center bg-[#003C43]/50 p-4" role="presentation">
                 <form onSubmit={saveProject} className="theme-surface max-h-[90vh] w-full max-w-xl space-y-4 overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
                   <div className="flex items-center justify-between"><h2 className="text-lg font-bold text-[#003C43]">{projectEditor.id ? "Edit project" : "Add project to a course"}</h2><button type="button" onClick={() => setProjectEditor(null)} className="text-sm text-[#587376]">Close</button></div>
-                  {!projectEditor.id && <label className="block text-xs font-semibold text-[#365c60]">Course<select required value={projectEditor.courseId} onChange={(e) => setProjectEditor({ ...projectEditor, courseId: e.target.value })} className="mt-1 w-full rounded-lg border border-[#003C43]/15 bg-white p-2.5 text-sm"><option value="">Select a course</option>{courses.filter((course) => !course.project_id).map((course) => <option key={course.id} value={course.id}>{course.name}</option>)}</select></label>}
+                  {!projectEditor.id && (
+                    <label className="block text-xs font-semibold text-[#365c60]">
+                      Course
+                      <select
+                        required
+                        value={projectEditor.courseId}
+                        onChange={(event) => setProjectEditor({ ...projectEditor, courseId: event.target.value ? Number(event.target.value) : "" })}
+                        className="mt-1 w-full rounded-lg border border-[#003C43]/15 bg-white p-2.5 text-sm"
+                      >
+                        <option value="">{loadingFormCourses ? "Loading courses…" : formCourses.length ? "Select a course" : "No courses available"}</option>
+                        {formCourses.map((course) => (
+                          <option key={course.id} value={course.id}>
+                            {course.name}{course.code ? ` (${course.code})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="mt-1 block font-normal text-[#718b8d]">
+                        {loadingFormCourses
+                          ? "Loading courses assigned to your account…"
+                          : formCoursesError
+                            ? formCoursesError
+                            : formCourses.length === 0
+                              ? "No courses are assigned to your account."
+                              : `${formCourses.length} course${formCourses.length === 1 ? "" : "s"} available. Courses can have multiple projects.`}
+                      </span>
+                    </label>
+                  )}
                   <label className="block text-xs font-semibold text-[#365c60]">Project title<input value={projectEditor.title} onChange={(e) => setProjectEditor({ ...projectEditor, title: e.target.value })} className="mt-1 w-full rounded-lg border border-[#003C43]/15 p-2.5 text-sm" /></label>
                   <label className="block text-xs font-semibold text-[#365c60]">Description<textarea value={projectEditor.description} onChange={(e) => setProjectEditor({ ...projectEditor, description: e.target.value })} rows="3" className="mt-1 w-full rounded-lg border border-[#003C43]/15 p-2.5 text-sm" /></label>
                   <label className="block text-xs font-semibold text-[#365c60]">Project requirements file<input type="file" accept=".pdf,application/pdf" required={!projectEditor.requirementsName} onChange={(e) => setProjectEditor({ ...projectEditor, requirementsFile: e.target.files?.[0] || null })} className="mt-1 w-full rounded-lg border border-[#003C43]/15 bg-white p-2.5 text-sm" /><span className="mt-1 block font-normal text-[#718b8d]">Upload a PDF file.{projectEditor.requirementsFile ? ` Selected: ${projectEditor.requirementsFile.name}` : projectEditor.requirementsName ? ` Current file: ${projectEditor.requirementsName}` : " Required for this project."}</span></label>
                   <div className="grid gap-3 sm:grid-cols-3"><label className="text-xs font-semibold text-[#365c60]">Min team size<input type="number" min="1" required value={projectEditor.min_members_per_team} onChange={(e) => setProjectEditor({ ...projectEditor, min_members_per_team: e.target.value })} className="mt-1 w-full rounded-lg border border-[#003C43]/15 p-2.5 text-sm" /></label><label className="text-xs font-semibold text-[#365c60]">Max team size<input type="number" min="1" required value={projectEditor.max_members_per_team} onChange={(e) => setProjectEditor({ ...projectEditor, max_members_per_team: e.target.value })} className="mt-1 w-full rounded-lg border border-[#003C43]/15 p-2.5 text-sm" /></label><label className="text-xs font-semibold text-[#365c60]">Deadline<input type="datetime-local" value={projectEditor.deadline} onChange={(e) => setProjectEditor({ ...projectEditor, deadline: e.target.value })} className="mt-1 w-full rounded-lg border border-[#003C43]/15 p-2.5 text-sm" /></label></div>
                   {projectError && <p className="text-sm text-[#a94646]" role="alert">{projectError}</p>}
-                  <div className="flex justify-between gap-2">{projectEditor.id && <button type="button" disabled={savingProject} onClick={deleteProject} className="mr-auto rounded-lg border border-[#a94646]/25 px-4 py-2 text-sm font-semibold text-[#a94646] disabled:opacity-60">Delete project</button>}<button type="button" onClick={() => setProjectEditor(null)} className="rounded-lg border border-[#003C43]/15 px-4 py-2 text-sm">Cancel</button><button disabled={savingProject} className="rounded-lg bg-[#135D66] px-4 py-2 text-sm font-bold text-white disabled:opacity-60">{savingProject ? "Saving…" : "Save project"}</button></div>
+                  <div className="flex justify-between gap-2">{projectEditor.id && <button type="button" disabled={savingProject} onClick={deleteProject} className="mr-auto rounded-lg border border-[#a94646]/25 px-4 py-2 text-sm font-semibold text-[#a94646] disabled:opacity-60">Delete project</button>}<button type="button" onClick={() => setProjectEditor(null)} className="rounded-lg border border-[#003C43]/15 px-4 py-2 text-sm">Cancel</button><button disabled={savingProject || (!projectEditor.id && (loadingFormCourses || Boolean(formCoursesError) || formCourses.length === 0))} className="rounded-lg bg-[#135D66] px-4 py-2 text-sm font-bold text-white disabled:opacity-60">{savingProject ? "Saving…" : "Save project"}</button></div>
                 </form>
               </div>
+            )}
+            {selectedTask && (
+              <TaskDetailsModal
+                task={selectedTask}
+                onClose={() => setSelectedTask(null)}
+                canManage={false}
+                viewerRole="instructor"
+                currentUserId={instructor?.id}
+                onTaskUpdated={(updated) => {
+                  setSelectedTask(updated)
+                  setTasks((items) => items.map((item) => (item.id === updated.id ? updated : item)))
+                  setNotice("Task feedback saved.")
+                }}
+              />
+            )}
+            {studentProfileId && (
+              <StudentProfileModal
+                studentId={studentProfileId}
+                onClose={() => setStudentProfileId(null)}
+              />
+            )}
+            {pdfProject && (
+              <PdfPreview project={pdfProject} onClose={() => setPdfProject(null)} />
+            )}
+            {previewFile && (
+              <FilePreviewModal
+                path={previewFile.path}
+                title={previewFile.title}
+                fileName={previewFile.fileName}
+                onClose={() => setPreviewFile(null)}
+                onDownload={() => {
+                  if (previewFile.submission) downloadSubmission(previewFile.submission)
+                }}
+              />
             )}
           </div>
         </main>
