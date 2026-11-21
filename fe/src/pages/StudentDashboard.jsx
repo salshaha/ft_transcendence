@@ -1,4 +1,9 @@
 import { useEffect, useState } from "react"
+import PasswordSecurityCard from "../components/auth/PasswordSecurityCard"
+import { formatDate, statusTone } from "../components/instructor/formatters"
+import TaskDetailsModal from "../components/instructor/TaskDetailsModal"
+import StudentTaskCreateModal from "../components/student/StudentTaskCreateModal"
+import { listTasks } from "../services/taskService"
 import {
   addStudentSkill,
   createStudentTeam,
@@ -7,6 +12,7 @@ import {
   getStudentCourses,
   getStudentDashboard,
   getStudentProfile,
+  getStudentTeams,
   joinStudentTeam,
   openStudentProjectRequirements,
   removeStudentSkill,
@@ -101,6 +107,12 @@ const iconPaths = {
     </>
   ),
   moon: <path d="M20.5 14.2A8 8 0 0 1 9.8 3.5 9 9 0 1 0 20.5 14.2Z" />,
+  clipboard: (
+    <>
+      <rect x="5" y="4" width="14" height="17" rx="2" />
+      <path d="M9 4V2h6v2M9 10h6M9 14h6M9 18h4" />
+    </>
+  ),
 }
 
 function Icon({
@@ -127,6 +139,7 @@ const navItems = [
   { label: "Overview", icon: "grid" },
   { label: "My Profile", icon: "user" },
   { label: "My Courses", icon: "book" },
+  { label: "Tasks", icon: "clipboard" },
   { label: "Settings", icon: "settings" },
 ]
 
@@ -550,12 +563,15 @@ function CourseProjectPage({
   teamName,
   creatingTeam,
   joiningTeam,
+  selectedProjectId,
+  onSelectProject,
   onTeamNameChange,
   onCreateTeam,
   onJoinTeam,
   onBack,
 }) {
   const project = data?.project || null
+  const projects = Array.isArray(data?.projects) ? data.projects : project ? [project] : []
   const teams = Array.isArray(data?.teams) ? data.teams : []
   const alreadyInTeam = teams.some((team) => team.is_member)
 
@@ -583,6 +599,15 @@ function CourseProjectPage({
         <p className="rounded-xl bg-white p-4 text-xs text-[#6d898b]">No project has been published for this course yet.</p>
       ) : (
         <>
+          {projects.length > 1 && (
+            <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.06)] sm:p-6">
+              <label className="text-xs font-semibold text-[#365c60]">Project
+                <select value={selectedProjectId || project.id} onChange={(event) => onSelectProject(event.target.value)} className="theme-control mt-1 w-full rounded-lg border p-2.5 text-sm sm:max-w-md">
+                  {projects.map((item) => <option key={item.id} value={item.id}>{item.title || `Project ${item.id}`}</option>)}
+                </select>
+              </label>
+            </section>
+          )}
           <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.06)] sm:p-6">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
@@ -749,7 +774,136 @@ function CourseProjectPage({
   )
 }
 
-function SettingsPage({ student, onSaveAccount }) {
+function TasksPage({
+  tasks,
+  myTeams,
+  courses,
+  loading,
+  error,
+  notice,
+  courseFilter,
+  projectFilter,
+  statusFilter,
+  onCourseFilterChange,
+  onProjectFilterChange,
+  onStatusFilterChange,
+  onCreate,
+  onOpen,
+}) {
+  const projectOptions = Array.from(
+    new Map(
+      tasks
+        .filter((task) => task.project?.id)
+        .map((task) => [task.project.id, task.project]),
+    ).values(),
+  )
+  const visibleTasks = tasks.filter((task) => {
+    if (courseFilter !== "all" && String(task.course?.id) !== courseFilter) return false
+    if (projectFilter !== "all" && String(task.project?.id) !== projectFilter) return false
+    if (statusFilter !== "all" && task.status !== statusFilter) return false
+    return true
+  })
+
+  return (
+    <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.06)] sm:p-6">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-[#003C43]">Tasks</h1>
+          <p className="mt-1 text-xs text-[#6d898b]">
+            Manage your team tasks, assign work, and review instructor feedback.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onCreate}
+          disabled={myTeams.length === 0}
+          className="rounded-xl bg-[#135D66] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#003C43] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          Create task
+        </button>
+      </div>
+
+      {notice && <p className="theme-soft mt-4 rounded-xl p-3 text-xs text-[#135D66]" role="status">{notice}</p>}
+      {error && <p className="mt-4 rounded-xl bg-[#fff0f0] p-3 text-xs text-[#a94646]" role="alert">{error}</p>}
+      {myTeams.length === 0 && !loading && (
+        <p className="theme-soft mt-4 rounded-xl p-3 text-xs text-[#587376]">
+          Join or create a project team before creating tasks.
+        </p>
+      )}
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+        <label className="text-xs font-semibold text-[#365c60]">Course
+          <select value={courseFilter} onChange={(event) => { onCourseFilterChange(event.target.value); onProjectFilterChange("all") }} className="theme-control mt-1 w-full rounded-lg border p-2.5 text-sm">
+            <option value="all">All courses</option>
+            {(courses.length ? courses : Array.from(new Map(tasks.map((task) => [task.course?.id, task.course]).filter(([id]) => id)).values())).map((course) => (
+              <option key={course.id} value={course.id}>{course.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs font-semibold text-[#365c60]">Project
+          <select value={projectFilter} onChange={(event) => onProjectFilterChange(event.target.value)} className="theme-control mt-1 w-full rounded-lg border p-2.5 text-sm">
+            <option value="all">All projects</option>
+            {projectOptions
+              .filter((project) => courseFilter === "all" || String(project.course?.id) === courseFilter)
+              .map((project) => <option key={project.id} value={project.id}>{project.title || `Project ${project.id}`}</option>)}
+          </select>
+        </label>
+        <label className="text-xs font-semibold text-[#365c60]">Status
+          <select value={statusFilter} onChange={(event) => onStatusFilterChange(event.target.value)} className="theme-control mt-1 w-full rounded-lg border p-2.5 text-sm">
+            <option value="all">All statuses</option>
+            <option value="todo">To do</option>
+            <option value="in_progress">In progress</option>
+            <option value="review">Review</option>
+            <option value="done">Done</option>
+          </select>
+        </label>
+      </div>
+
+      {loading ? (
+        <p className="mt-5 text-sm text-[#6d898b]">Loading tasks...</p>
+      ) : visibleTasks.length ? (
+        <div className="mt-5 overflow-x-auto">
+          <table className="w-full min-w-[820px] text-left text-sm">
+            <thead>
+              <tr className="border-b border-[#003C43]/10 text-[10px] font-bold uppercase tracking-[0.12em] text-[#77B0AA]">
+                <th className="py-3 pr-4">Task</th>
+                <th className="py-3 pr-4">Course / project</th>
+                <th className="py-3 pr-4">Assignee</th>
+                <th className="py-3 pr-4">Status</th>
+                <th className="py-3 pr-4">Due</th>
+                <th className="py-3 pr-4">Activity</th>
+                <th className="py-3"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#003C43]/7">
+              {visibleTasks.map((task) => (
+                <tr key={task.id}>
+                  <td className="py-3 pr-4">
+                    <div className="font-bold text-[#003C43]">{task.title}</div>
+                    <div className="text-[10px] text-[#718b8d]">{task.team?.name || "No team"}</div>
+                  </td>
+                  <td className="py-3 pr-4 text-xs text-[#587376]">
+                    <div>{task.course?.name || "—"}</div>
+                    <div className="text-[10px]">{task.project?.title || "—"}</div>
+                  </td>
+                  <td className="py-3 pr-4 text-xs text-[#587376]">{task.assignee?.name || <span className="italic text-[#718b8d]">Unassigned</span>}</td>
+                  <td className="py-3 pr-4"><span className={`rounded-md px-2 py-1 text-[10px] font-bold uppercase ${statusTone(task.status)}`}>{task.status.replaceAll("_", " ")}</span></td>
+                  <td className="py-3 pr-4 text-xs text-[#587376]">{formatDate(task.due_date)}</td>
+                  <td className="py-3 pr-4 text-[10px] text-[#718b8d]">{task.comment_count || 0} comments · {task.attachment_count || 0} files</td>
+                  <td className="py-3"><button type="button" onClick={() => onOpen(task)} className="theme-control rounded-lg px-3 py-2 text-[10px] font-bold text-[#135D66]">Open</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="theme-soft mt-5 rounded-xl p-4 text-sm text-[#587376]">No tasks match the current filters.</p>
+      )}
+    </section>
+  )
+}
+
+function SettingsPage({ student, onSaveAccount, onRequestPasswordReset }) {
   const [email, setEmail] = useState(student.email)
   const [currentPassword, setCurrentPassword] = useState("")
   const [saving, setSaving] = useState(false)
@@ -880,36 +1034,21 @@ function SettingsPage({ student, onSaveAccount }) {
           </form>
         </section>
 
-        <section className="theme-surface h-fit rounded-2xl bg-white p-6 shadow-[0_8px_30px_rgba(0,60,67,0.06)] sm:p-7">
-          <div className="grid h-11 w-11 place-items-center rounded-xl bg-[#f5f3ff] text-[#6D5BD0]">
-            <Icon name="settings" />
-          </div>
-          <h2 className="mt-5 text-lg font-extrabold text-[#003C43]">
-            Password & security
-          </h2>
-          <p className="mt-2 text-xs leading-5 text-[#6d898b]">
-            Password reset is not available because the backend does not yet
-            provide a reset-link workflow.
-          </p>
-          <button
-            disabled
-            title="Password reset is not available yet"
-            className="mt-6 w-full cursor-not-allowed rounded-xl border border-[#6D5BD0]/25 px-4 py-3 text-xs font-bold text-[#6D5BD0] opacity-60"
-          >
-            Reset password unavailable
-          </button>
-        </section>
+        <PasswordSecurityCard
+          email={student.email}
+          onRequestPasswordReset={onRequestPasswordReset}
+        />
       </div>
     </div>
   )
 }
 
-export default function StudentDashboard({ onLogout }) {
+export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
   const [active, setActive] = useState("Overview")
   const [mobileOpen, setMobileOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [darkMode, setDarkMode] = useState(false)
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem("team-platform-theme") === "dark")
   const [dashboard, setDashboard] = useState(null)
   const [profile, setProfile] = useState(null)
   const [coursePageData, setCoursePageData] = useState(null)
@@ -918,12 +1057,23 @@ export default function StudentDashboard({ onLogout }) {
   const [joiningTeam, setJoiningTeam] = useState(null)
   const [joinMessage, setJoinMessage] = useState("")
   const [selectedCourse, setSelectedCourse] = useState(null)
+  const [selectedProjectId, setSelectedProjectId] = useState(null)
   const [projectData, setProjectData] = useState(null)
   const [projectLoading, setProjectLoading] = useState(false)
   const [projectError, setProjectError] = useState("")
   const [teamName, setTeamName] = useState("")
   const [creatingTeam, setCreatingTeam] = useState(false)
   const [projectMessage, setProjectMessage] = useState("")
+  const [tasks, setTasks] = useState([])
+  const [myTeams, setMyTeams] = useState([])
+  const [loadingTasks, setLoadingTasks] = useState(false)
+  const [tasksError, setTasksError] = useState("")
+  const [taskNotice, setTaskNotice] = useState("")
+  const [taskCourseFilter, setTaskCourseFilter] = useState("all")
+  const [taskProjectFilter, setTaskProjectFilter] = useState("all")
+  const [taskStatusFilter, setTaskStatusFilter] = useState("all")
+  const [selectedTask, setSelectedTask] = useState(null)
+  const [creatingTask, setCreatingTask] = useState(false)
 
   useEffect(() => {
     let activeRequest = true
@@ -943,6 +1093,11 @@ export default function StudentDashboard({ onLogout }) {
   }, [])
 
   useEffect(() => {
+    document.documentElement.classList.toggle("dark", darkMode)
+    localStorage.setItem("team-platform-theme", darkMode ? "dark" : "light")
+  }, [darkMode])
+
+  useEffect(() => {
     setPageError("")
     if (active !== "My Profile" && active !== "My Courses") return undefined
 
@@ -957,6 +1112,28 @@ export default function StudentDashboard({ onLogout }) {
       })
       .catch((requestError) => {
         if (activeRequest) setPageError(requestError.message)
+      })
+    return () => {
+      activeRequest = false
+    }
+  }, [active])
+
+  useEffect(() => {
+    if (active !== "Tasks") return undefined
+    let activeRequest = true
+    setLoadingTasks(true)
+    setTasksError("")
+    Promise.all([listTasks(), getStudentTeams()])
+      .then(([taskItems, teamData]) => {
+        if (!activeRequest) return
+        setTasks(Array.isArray(taskItems) ? taskItems : [])
+        setMyTeams(Array.isArray(teamData.teams) ? teamData.teams : [])
+      })
+      .catch((requestError) => {
+        if (activeRequest) setTasksError(requestError.message)
+      })
+      .finally(() => {
+        if (activeRequest) setLoadingTasks(false)
       })
     return () => {
       activeRequest = false
@@ -986,12 +1163,13 @@ export default function StudentDashboard({ onLogout }) {
     }
   }
 
-  async function loadCourseProject(courseId) {
+  async function loadCourseProject(courseId, projectId = null) {
     setProjectLoading(true)
     setProjectError("")
     try {
-      const data = await getStudentCourseTeams(courseId)
+      const data = await getStudentCourseTeams(courseId, projectId)
       setProjectData(data)
+      if (projectId === null && data?.project?.id) setSelectedProjectId(data.project.id)
     } catch (requestError) {
       setProjectError(requestError.message)
     } finally {
@@ -1001,6 +1179,7 @@ export default function StudentDashboard({ onLogout }) {
 
   function handleViewProject(course) {
     setSelectedCourse(course)
+    setSelectedProjectId(null)
     setProjectData(null)
     setProjectError("")
     setProjectMessage("")
@@ -1009,8 +1188,16 @@ export default function StudentDashboard({ onLogout }) {
     loadCourseProject(course.id)
   }
 
+  function handleSelectProject(projectId) {
+    setSelectedProjectId(Number(projectId))
+    setProjectMessage("")
+    setTeamName("")
+    loadCourseProject(selectedCourse.id, projectId)
+  }
+
   function handleBackToCourses() {
     setSelectedCourse(null)
+    setSelectedProjectId(null)
     setProjectData(null)
     setProjectError("")
     setProjectMessage("")
@@ -1031,7 +1218,7 @@ export default function StudentDashboard({ onLogout }) {
       const createdTeam = result.team || result
       setTeamName("")
       setProjectMessage(`Team "${createdTeam.name}" created successfully.`)
-      await loadCourseProject(selectedCourse.id)
+      await loadCourseProject(selectedCourse.id, selectedProjectId)
       const updatedDashboard = await getStudentDashboard()
       setDashboard(updatedDashboard)
     } catch (requestError) {
@@ -1048,7 +1235,7 @@ export default function StudentDashboard({ onLogout }) {
     try {
       await joinStudentTeam(teamId)
       setProjectMessage("You joined the team.")
-      await loadCourseProject(selectedCourse.id)
+      await loadCourseProject(selectedCourse.id, selectedProjectId)
       const updatedDashboard = await getStudentDashboard()
       setDashboard(updatedDashboard)
     } catch (requestError) {
@@ -1063,6 +1250,23 @@ export default function StudentDashboard({ onLogout }) {
     const updatedProfile = { ...dashboard.student, email }
     setDashboard((current) => ({ ...current, student: updatedProfile }))
     setProfile(updatedProfile)
+  }
+
+  function handleTaskCreated(task) {
+    setTasks((items) => [task, ...items])
+    setCreatingTask(false)
+    setTaskNotice("Task created successfully.")
+  }
+
+  function handleTaskUpdated(updated) {
+    setTasks((items) => items.map((item) => (item.id === updated.id ? updated : item)))
+    setSelectedTask(updated)
+  }
+
+  function handleTaskDeleted(taskId) {
+    setTasks((items) => items.filter((item) => item.id !== taskId))
+    setSelectedTask(null)
+    setTaskNotice("Task deleted.")
   }
 
   if (loading) {
@@ -1386,6 +1590,8 @@ export default function StudentDashboard({ onLogout }) {
                   teamName={teamName}
                   creatingTeam={creatingTeam}
                   joiningTeam={joiningTeam}
+                  selectedProjectId={selectedProjectId}
+                  onSelectProject={handleSelectProject}
                   onTeamNameChange={setTeamName}
                   onCreateTeam={handleCreateTeam}
                   onJoinTeam={handleJoinProjectTeam}
@@ -1394,8 +1600,47 @@ export default function StudentDashboard({ onLogout }) {
               ) : (
                 <p className="text-xs text-[#6d898b]" role="status">Select a course to view its project.</p>
               )
+            ) : active === "Tasks" ? (
+              <TasksPage
+                tasks={tasks}
+                myTeams={myTeams}
+                courses={courses}
+                loading={loadingTasks}
+                error={tasksError}
+                notice={taskNotice}
+                courseFilter={taskCourseFilter}
+                projectFilter={taskProjectFilter}
+                statusFilter={taskStatusFilter}
+                onCourseFilterChange={setTaskCourseFilter}
+                onProjectFilterChange={setTaskProjectFilter}
+                onStatusFilterChange={setTaskStatusFilter}
+                onCreate={() => { setTaskNotice(""); setCreatingTask(true) }}
+                onOpen={(task) => { setTaskNotice(""); setSelectedTask(task) }}
+              />
             ) : (
-              <SettingsPage student={student} onSaveAccount={handleSaveAccount} />
+              <SettingsPage
+                student={student}
+                onSaveAccount={handleSaveAccount}
+                onRequestPasswordReset={onRequestPasswordReset}
+              />
+            )}
+            {selectedTask && (
+              <TaskDetailsModal
+                task={selectedTask}
+                onClose={() => setSelectedTask(null)}
+                canManage
+                viewerRole="student"
+                currentUserId={student.id}
+                onTaskUpdated={handleTaskUpdated}
+                onTaskDeleted={handleTaskDeleted}
+              />
+            )}
+            {creatingTask && (
+              <StudentTaskCreateModal
+                teams={myTeams}
+                onClose={() => setCreatingTask(false)}
+                onCreated={handleTaskCreated}
+              />
             )}
           </div>
         </main>

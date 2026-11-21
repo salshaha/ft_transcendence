@@ -4,7 +4,7 @@ import PasswordInput from "./PasswordInput";
 
 const initialValues = { first_name: "", last_name: "", student_id: "", email: "", password: "" };
 
-export default function LoginForm({ onAuthenticated }) {
+export default function LoginForm({ onAuthenticated, onForgotPassword, notice = "" }) {
   const [mode, setMode] = useState("login");
   const [values, setValues] = useState(initialValues);
   const [success, setSuccess] = useState("");
@@ -68,8 +68,13 @@ export default function LoginForm({ onAuthenticated }) {
             Student accounts can sign up here. Instructor accounts are created by an administrator.
           </p>
         )}
+        {isLogin && (
+          <button className="auth-link justify-self-end" type="button" onClick={onForgotPassword}>
+            Forgot password?
+          </button>
+        )}
         {error && <p className="form-message error" role="alert">{error}</p>}
-        {success && <p className="form-message success" role="status">{success}</p>}
+        {(success || notice) && <p className="form-message success" role="status">{success || notice}</p>}
         <button className="submit-button" type="submit" disabled={isLoading}>{isLoading ? "Please wait..." : isLogin ? "Continue to Team-Platform  →" : "Create my account  →"}</button>
       </form>
       <p className="legal">By continuing, you agree to our <a href="#terms">Terms</a> and <a href="#privacy">Privacy Policy</a>.</p>

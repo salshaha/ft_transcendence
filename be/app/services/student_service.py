@@ -257,6 +257,18 @@ def get_dashboard(student):
     }
 
 
+def get_my_teams(student_id):
+    team_ids = [
+        team_id
+        for (team_id,) in db.session.query(Team.id)
+        .join(TeamMember, TeamMember.team_id == Team.id)
+        .filter(TeamMember.student_id == student_id)
+        .order_by(Team.id.asc())
+        .all()
+    ]
+    return [get_team_details(student_id, team_id) for team_id in team_ids]
+
+
 def _parse_datetime(value):
     if value is None or value == "":
         return None
@@ -274,13 +286,12 @@ def get_course_project(student_id, course_id):
     ).first()
     if enrolled is None:
         return None
-    course = Course.query.get(course_id)
-    if course is None or course.project is None:
+    course = Course.query.options(joinedload(Course.projects)).get(course_id)
+    if course is None or not course.projects:
         return None
-    project = course.project
-    return {
-        "course": {"id": course.id, "name": course.name},
-        "project": {
+
+    def serialize_project(project):
+        return {
             "id": project.id,
             "title": project.title,
             "description": project.description,
@@ -294,21 +305,48 @@ def get_course_project(student_id, course_id):
                 "content_type": project.requirements_content_type,
                 "size": project.requirements_size,
             } if project.requirements_file_key else None,
-        },
+        }
+
+    projects = [
+        serialize_project(project)
+        for project in sorted(course.projects, key=lambda item: item.id, reverse=True)
+    ]
+    return {
+        "course": {"id": course.id, "name": course.name},
+        "projects": projects,
+        "project": projects[0],
     }
 
 
-def get_course_teams(student_id, course_id):
+def get_course_teams(student_id, course_id, project_id=None):
     data = get_course_project(student_id, course_id)
     if data is None:
         return None
 
-    max_members = data["project"]["max_members_per_team"]
+    selected_project = data["project"]
+    if project_id is not None:
+        try:
+            selected_project_id = int(project_id)
+        except (TypeError, ValueError):
+            return None
+        selected_project = next(
+            (
+                project
+                for project in data.get("projects", [])
+                if project["id"] == selected_project_id
+            ),
+            None,
+        )
+        if selected_project is None:
+            return None
+
+    data["project"] = selected_project
+    max_members = selected_project["max_members_per_team"]
     teams = (
         Team.query.options(
             selectinload(Team.members).joinedload(TeamMember.student)
         )
-        .filter(Team.project_id == data["project"]["id"])
+        .filter(Team.project_id == selected_project["id"])
         .order_by(Team.name.asc(), Team.id.asc())
         .all()
     )

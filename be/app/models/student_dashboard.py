@@ -51,8 +51,8 @@ class Course(db.Model):
     enrollments = db.relationship(
         "CourseEnrollment", back_populates="course", passive_deletes=True
     )
-    project = db.relationship(
-        "Project", back_populates="course", uselist=False, passive_deletes=True
+    projects = db.relationship(
+        "Project", back_populates="course", passive_deletes=True
     )
 
 
@@ -66,6 +66,7 @@ class Project(db.Model):
             "max_members_per_team >= min_members_per_team",
             name="chk_project_max_members",
         ),
+        db.Index("idx_projects_course", "course_id"),
     )
 
     id = db.Column(db.BigInteger, primary_key=True)
@@ -73,7 +74,6 @@ class Project(db.Model):
         db.BigInteger,
         db.ForeignKey("courses.id", ondelete="CASCADE"),
         nullable=False,
-        unique=True,
     )
     title = db.Column(db.String(255))
     description = db.Column(db.Text)
@@ -92,7 +92,7 @@ class Project(db.Model):
         server_default=db.func.current_timestamp(),
     )
 
-    course = db.relationship("Course", back_populates="project")
+    course = db.relationship("Course", back_populates="projects")
     teams = db.relationship("Team", back_populates="project", passive_deletes=True)
 
 
