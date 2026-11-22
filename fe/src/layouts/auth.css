@@ -305,3 +305,18 @@
     padding: 42px 25px;
   }
 }
+
+.microsoft-button {
+  width: 100%;
+  border: 1px solid #dcebe8;
+  border-radius: 10px;
+  padding: 13px 14px;
+  background: #ffffff;
+  color: #003c43;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.microsoft-button:hover {
+  background: #edf7f5;
+}

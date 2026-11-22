@@ -6,3 +6,6 @@ python-dotenv
 Werkzeug
 email-validator
 flask-cors
+msal
+requests
+cryptography

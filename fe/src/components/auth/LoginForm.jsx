@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "../../hooks/useAuth";
+import { getMicrosoftAuthStatus, startMicrosoftLogin } from "../../services/authService";
 import PasswordInput from "./PasswordInput";
 
 const initialValues = { first_name: "", last_name: "", student_id: "", email: "", password: "" };
@@ -8,18 +9,35 @@ export default function LoginForm({ onAuthenticated, onForgotPassword, notice = 
   const [mode, setMode] = useState("login");
   const [values, setValues] = useState(initialValues);
   const [success, setSuccess] = useState("");
+  const [microsoftConfigured, setMicrosoftConfigured] = useState(false);
+  const [microsoftError, setMicrosoftError] = useState("");
   const { submit, isLoading, error, clearError } = useAuth();
   const isLogin = mode === "login";
+
+  useEffect(() => {
+    getMicrosoftAuthStatus()
+      .then((status) => setMicrosoftConfigured(Boolean(status?.configured)))
+      .catch(() => setMicrosoftConfigured(false));
+
+    const query = new URLSearchParams(window.location.search);
+    const authError = query.get("microsoft_error");
+    if (authError) {
+      setMicrosoftError(authError);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
 
   function changeMode(nextMode) {
     setMode(nextMode);
     setSuccess("");
+    setMicrosoftError("");
     clearError();
   }
 
   function handleChange(event) {
     setValues((current) => ({ ...current, [event.target.name]: event.target.value }));
     if (error) clearError();
+    if (microsoftError) setMicrosoftError("");
   }
 
   async function handleSubmit(event) {
@@ -73,9 +91,14 @@ export default function LoginForm({ onAuthenticated, onForgotPassword, notice = 
             Forgot password?
           </button>
         )}
-        {error && <p className="form-message error" role="alert">{error}</p>}
+        {(error || microsoftError) && <p className="form-message error" role="alert">{error || microsoftError}</p>}
         {(success || notice) && <p className="form-message success" role="status">{success || notice}</p>}
         <button className="submit-button" type="submit" disabled={isLoading}>{isLoading ? "Please wait..." : isLogin ? "Continue to Team-Platform  →" : "Create my account  →"}</button>
+        {isLogin && microsoftConfigured && (
+          <button type="button" className="microsoft-button" onClick={startMicrosoftLogin}>
+            Sign in with Microsoft
+          </button>
+        )}
       </form>
       <p className="legal">By continuing, you agree to our <a href="#terms">Terms</a> and <a href="#privacy">Privacy Policy</a>.</p>
     </div>
