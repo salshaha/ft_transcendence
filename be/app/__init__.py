@@ -13,6 +13,7 @@ def create_app():
         app,
         resources={
             r"/api/*": {"origins": app.config["FRONTEND_ORIGINS"]},
+            r"/auth/*": {"origins": app.config["FRONTEND_ORIGINS"]},
         },
         supports_credentials=True,
     )
@@ -23,7 +24,7 @@ def create_app():
     # Import every model before registering blueprints so both Alembic and
     # the application metadata see the complete schema.
     from app import models  # noqa: F401
-    from app.auth.routes import auth_bp
+    from app.auth.routes import auth_bp, microsoft_bp
     from app.cli import register_cli
     from app.routes.admin import admin_bp
     from app.routes.instructor import instructor_bp
@@ -40,6 +41,8 @@ def create_app():
 
     app.register_blueprint(admin_bp, url_prefix="/api/admin")
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
+    app.register_blueprint(microsoft_bp, url_prefix="/auth", name="microsoft_auth_root")
+    app.register_blueprint(microsoft_bp, url_prefix="/api/auth", name="microsoft_auth_api")
     app.register_blueprint(instructor_bp, url_prefix="/api/instructor")
     app.register_blueprint(student_bp, url_prefix="/api/student")
     app.register_blueprint(task_collaboration_bp, url_prefix="/api")

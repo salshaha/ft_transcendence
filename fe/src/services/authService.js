@@ -30,3 +30,14 @@ export function registerUser({ first_name, last_name, student_id, email, passwor
 export function logoutUser() {
   return apiRequest("/api/auth/logout", { method: "POST" });
 }
+
+export function getMicrosoftAuthStatus() {
+  return apiRequest("/api/auth/microsoft/status", {
+    errorMessage: "Unable to check Microsoft sign-in availability.",
+  });
+}
+
+export function startMicrosoftLogin() {
+  const apiUrl = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "");
+  window.location.assign(`${apiUrl}/api/auth/microsoft/login`);
+}

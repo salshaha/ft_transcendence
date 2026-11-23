@@ -77,3 +77,17 @@ STORAGE_MAX_TASK_ATTACHMENT_BYTES = env_int(
 STORAGE_MAX_PROJECT_SUBMISSION_BYTES = env_int(
     "STORAGE_MAX_PROJECT_SUBMISSION_BYTES", 100 * 1024 * 1024
 )
+
+
+# Microsoft Entra ID (organizational / multi-tenant)
+MICROSOFT_CLIENT_ID = os.getenv("MICROSOFT_CLIENT_ID")
+MICROSOFT_CLIENT_SECRET = os.getenv("MICROSOFT_CLIENT_SECRET")
+MICROSOFT_AUTHORITY = os.getenv(
+    "MICROSOFT_AUTHORITY",
+    "https://login.microsoftonline.com/organizations",
+)
+MICROSOFT_REDIRECT_URI = os.getenv(
+    "MICROSOFT_REDIRECT_URI",
+    "http://localhost:5000/auth/microsoft/callback",
+)
+MICROSOFT_SCOPES = ["User.Read"]
