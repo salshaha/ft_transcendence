@@ -1,4 +1,7 @@
-from flask import Blueprint, jsonify, request
+import csv
+from io import StringIO
+
+from flask import Blueprint, jsonify, make_response, request
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.extensions import db
@@ -9,6 +12,7 @@ from app.services.admin_service import (
     delete_user_admin,
     enroll_student,
     get_authenticated_admin,
+    get_analytics,
     get_stats,
     list_courses,
     list_users,
@@ -35,6 +39,60 @@ def dashboard():
         return jsonify(get_stats()), 200
     except SQLAlchemyError:
         return _database_error("Unable to retrieve stats")
+
+
+@admin_bp.route("/analytics", methods=["GET"])
+def analytics():
+    admin, error = get_authenticated_admin()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+    try:
+        return jsonify(
+            get_analytics(
+                request.args.get("start_date"), request.args.get("end_date")
+            )
+        ), 200
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except SQLAlchemyError:
+        return _database_error("Unable to retrieve analytics")
+
+
+@admin_bp.route("/analytics/export.csv", methods=["GET"])
+def export_analytics_csv():
+    admin, error = get_authenticated_admin()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+    try:
+        report = get_analytics(
+            request.args.get("start_date"), request.args.get("end_date")
+        )
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except SQLAlchemyError:
+        return _database_error("Unable to export analytics")
+
+    output = StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["Platform analytics", report["start_date"], report["end_date"]])
+    writer.writerow(["Current total", "Count"])
+    writer.writerows(report["totals"].items())
+    writer.writerow([])
+    writer.writerow(["Activity by date"])
+    writer.writerow(["Date", "New users", "New teams", "New tasks", "Submissions"])
+    for row in report["timeline"]:
+        writer.writerow(
+            [row["date"], row["users"], row["teams"], row["tasks"], row["submissions"]]
+        )
+    response = make_response("\ufeff" + output.getvalue())
+    response.headers["Content-Type"] = "text/csv; charset=utf-8"
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="platform-analytics-{report["start_date"]}-'
+        f'{report["end_date"]}.csv"'
+    )
+    return response
 
 
 @admin_bp.route("/users", methods=["GET"])

@@ -1,6 +1,7 @@
 import Login from "./pages/Login";
 import InstructorDashboard from "./pages/InstructorDashboard";
 import StudentDashboard from "./pages/StudentDashboard";
+import AdminDashboard from "./pages/AdminDashboard";
 import { getSession, logoutUser } from "./services/authService";
 import { useEffect, useState } from "react";
 
@@ -44,7 +45,7 @@ export default function App() {
     );
   }
 
-  if (user?.role === "instructor" || user?.role === "student") {
+  if (user?.role === "admin" || user?.role === "instructor" || user?.role === "student") {
     return (
       <>
         {error && (
@@ -52,7 +53,9 @@ export default function App() {
             {error}
           </p>
         )}
-        {user.role === "instructor" ? (
+        {user.role === "admin" ? (
+          <AdminDashboard onLogout={handleLogout} />
+        ) : user.role === "instructor" ? (
           <InstructorDashboard onLogout={handleLogout} />
         ) : (
           <StudentDashboard onLogout={handleLogout} />
