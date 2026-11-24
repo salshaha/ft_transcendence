@@ -107,5 +107,63 @@ export function instructorSubmissionFileUrl(submissionId, download = false) {
 }
 
 export function instructorStudentAvatarUrl(studentId) {
-  return `/api/instructor/students/${studentId}/avatar`
+  return `/api/instructor/students/${studentId}/avatar`;
+}
+
+function optionalFilter(value) {
+  return value === null || value === undefined || value === "" || value === "all"
+    ? null
+    : value;
+}
+
+export async function getInstructorGrades(filters = {}) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    const filterValue = optionalFilter(value);
+    if (filterValue !== null) params.set(key, String(filterValue));
+  }
+  const query = params.toString();
+  return apiRequest(`/api/instructor/grades${query ? `?${query}` : ""}`, {
+    errorMessage: "Unable to load grades.",
+  });
+}
+
+export async function saveInstructorGrade(payload, gradeId = null) {
+  return apiRequest(
+    gradeId ? `/api/instructor/grades/${gradeId}` : "/api/instructor/grades",
+    {
+      method: gradeId ? "PUT" : "POST",
+      payload,
+      errorMessage: "Unable to save the grade.",
+    },
+  );
+}
+
+export async function setInstructorGradePublished(gradeId, published) {
+  return apiRequest(`/api/instructor/grades/${gradeId}/publish`, {
+    method: "PUT",
+    payload: { published },
+    errorMessage: "Unable to update the grade publication status.",
+  });
+}
+
+export async function publishAllInstructorGrades(scope) {
+  return apiRequest("/api/instructor/grades/publish-all", {
+    method: "POST",
+    payload: scope,
+    errorMessage: "Unable to publish grades.",
+  });
+}
+
+export async function getInstructorGradeAudit(gradeId) {
+  return apiRequest(`/api/instructor/grades/${gradeId}/audit`, {
+    errorMessage: "Unable to load grade history.",
+  });
+}
+
+export async function getInstructorTeamKanban(teamId, projectId = null) {
+  const query = projectId ? `?project_id=${projectId}` : "";
+  return apiRequest(`/api/instructor/teams/${teamId}/kanban${query}`, {
+    errorMessage: "Unable to load the team board.",
+  });
 }

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react"
-import PasswordSecurityCard from "../components/auth/PasswordSecurityCard"
+import SettingsPage from "../components/SettingsPage"
 import { formatDate, statusTone } from "../components/instructor/formatters"
 import TaskDetailsModal from "../components/instructor/TaskDetailsModal"
+import MyGrades from "../components/student/MyGrades"
 import StudentTaskCreateModal from "../components/student/StudentTaskCreateModal"
 import { listTasks } from "../services/taskService"
 import {
@@ -140,6 +141,7 @@ const navItems = [
   { label: "My Profile", icon: "user" },
   { label: "My Courses", icon: "book" },
   { label: "Tasks", icon: "clipboard" },
+  { label: "My Grades", icon: "file" },
   { label: "Settings", icon: "settings" },
 ]
 
@@ -903,146 +905,6 @@ function TasksPage({
   )
 }
 
-function SettingsPage({ student, onSaveAccount, onRequestPasswordReset }) {
-  const [email, setEmail] = useState(student.email)
-  const [currentPassword, setCurrentPassword] = useState("")
-  const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState("")
-  const [error, setError] = useState("")
-
-  const saveDetails = async (event) => {
-    event.preventDefault()
-    setMessage("")
-    if (!email.includes("@")) {
-      setError("Enter a valid email address.")
-      return
-    }
-    if (!currentPassword) {
-      setError("Enter your current password to save changes.")
-      return
-    }
-    setError("")
-    setSaving(true)
-    try {
-      await onSaveAccount({ email, currentPassword })
-      setCurrentPassword("")
-      setMessage("Your personal information has been updated.")
-    } catch (requestError) {
-      setError(requestError.message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div>
-      <PageHeading
-        eyebrow="Account preferences"
-        title="Settings"
-        description="Review your personal information and keep your account secure."
-      />
-      <div className="grid gap-6 xl:grid-cols-[1.25fr_0.75fr]">
-        <section className="theme-surface rounded-2xl bg-white p-6 shadow-[0_8px_30px_rgba(0,60,67,0.06)] sm:p-7">
-          <div>
-            <h2 className="text-lg font-extrabold text-[#003C43]">
-              Personal information
-            </h2>
-            <p className="mt-1 text-xs text-[#6d898b]">
-              Your name and student ID are managed by the university.
-            </p>
-          </div>
-          <form onSubmit={saveDetails} className="mt-6 space-y-5">
-            <div className="grid gap-5 sm:grid-cols-2">
-              <div>
-                <label className="text-[10px] font-bold text-[#587376]">
-                  Full name
-                </label>
-                <input
-                  value={student.full_name}
-                  disabled
-                  className="mt-2 w-full cursor-not-allowed rounded-xl bg-[#eef4f3] px-4 py-3 text-sm text-[#8aa1a3] outline-none"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-[#587376]">
-                  Student ID
-                </label>
-                <input
-                  value={student.student_id || "Not provided"}
-                  disabled
-                  className="mt-2 w-full cursor-not-allowed rounded-xl bg-[#eef4f3] px-4 py-3 text-sm text-[#8aa1a3] outline-none"
-                />
-              </div>
-            </div>
-            <div>
-              <label
-                htmlFor="email"
-                className="text-[10px] font-bold text-[#587376]"
-              >
-                Email address
-              </label>
-              <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(event) => {
-                  setEmail(event.target.value)
-                  setMessage("")
-                  setError("")
-                }}
-                className="theme-control mt-2 w-full rounded-xl border border-[#003C43]/10 bg-white px-4 py-3 text-sm text-[#003C43] outline-none transition focus:border-[#6D5BD0] focus:ring-4 focus:ring-[#6D5BD0]/10"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="current-password"
-                className="text-[10px] font-bold text-[#587376]"
-              >
-                Current password
-              </label>
-              <input
-                id="current-password"
-                type="password"
-                value={currentPassword}
-                onChange={(event) => {
-                  setCurrentPassword(event.target.value)
-                  setMessage("")
-                  setError("")
-                }}
-                autoComplete="current-password"
-                placeholder="Required to change account details"
-                className="theme-control mt-2 w-full rounded-xl border border-[#003C43]/10 bg-white px-4 py-3 text-sm text-[#003C43] outline-none transition focus:border-[#6D5BD0] focus:ring-4 focus:ring-[#6D5BD0]/10"
-              />
-            </div>
-            {error && (
-              <div className="rounded-xl bg-[#fff0f0] px-4 py-3 text-[11px] font-semibold text-[#a94646]">
-                {error}
-              </div>
-            )}
-            {message && (
-              <div className="rounded-xl bg-[#E3FEF7] px-4 py-3 text-[11px] font-semibold text-[#135D66]">
-                {message}
-              </div>
-            )}
-            <button
-              type="submit"
-              disabled={saving}
-              className="rounded-xl bg-[#6D5BD0] px-5 py-3 text-xs font-bold text-white transition hover:bg-[#5c49c5] active:scale-[0.98] disabled:cursor-wait disabled:opacity-60"
-            >
-              {saving ? "Saving changes..." : "Save changes"}
-            </button>
-          </form>
-        </section>
-
-        <PasswordSecurityCard
-          email={student.email}
-          onRequestPasswordReset={onRequestPasswordReset}
-        />
-      </div>
-    </div>
-  )
-}
-
 export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
   const [active, setActive] = useState("Overview")
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -1617,12 +1479,19 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
                 onCreate={() => { setTaskNotice(""); setCreatingTask(true) }}
                 onOpen={(task) => { setTaskNotice(""); setSelectedTask(task) }}
               />
-            ) : (
+            ) : active === "My Grades" ? (
+              <MyGrades />
+            ) : active === "Settings" ? (
               <SettingsPage
-                student={student}
+                account={student}
+                accountType="student"
                 onSaveAccount={handleSaveAccount}
                 onRequestPasswordReset={onRequestPasswordReset}
               />
+            ) : (
+              <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 text-sm text-[#6d898b]">
+                This page is not available.
+              </section>
             )}
             {selectedTask && (
               <TaskDetailsModal
