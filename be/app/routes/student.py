@@ -3,7 +3,7 @@ from io import BytesIO
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from app.extensions import db
-from app.models.student_dashboard import Project, Course
+from app.models.student_dashboard import Course, CourseEnrollment, Project, TeamMember
 from app.services.student_service import (
     create_team,
     get_authenticated_student,
@@ -17,6 +17,7 @@ from app.services.student_service import (
     get_my_teams,
     get_submission,
     get_team_details,
+    get_team_preview,
     join_team,
     leave_team,
     save_peer_feedback,
@@ -161,6 +162,21 @@ def team_details(team_id):
         return _database_error("Unable to retrieve team")
 
 
+@student_bp.route("/teams/<int:team_id>/preview", methods=["GET"])
+def team_preview(team_id):
+    student, response, status = _student_or_response()
+    if response:
+        return response, status
+    try:
+        return jsonify(get_team_preview(student.id, team_id)), 200
+    except LookupError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({"message": str(exc)}), 403
+    except SQLAlchemyError:
+        return _database_error("Unable to retrieve team preview")
+
+
 @student_bp.route("/teams/<int:team_id>/join", methods=["POST"])
 def join_team_route(team_id):
     student, response, status = _student_or_response()
@@ -174,10 +190,16 @@ def join_team_route(team_id):
             message, error_status = error
             return jsonify({"message": message}), error_status
         db.session.commit()
+        member_count = TeamMember.query.filter_by(team_id=membership.team_id).count()
+        max_members = membership.team.project.max_members_per_team
         return jsonify({
             "message": "Successfully joined team",
             "team_id": membership.team_id,
             "student_id": membership.student_id,
+            "is_member": True,
+            "current_member_count": member_count,
+            "max_members": max_members,
+            "available_spots": max(0, max_members - member_count),
         }), 201
     except IntegrityError:
         db.session.rollback()
@@ -198,6 +220,8 @@ def leave_team_route(team_id):
         return jsonify(result), 200
     except LookupError as exc:
         return jsonify({"message": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
     except SQLAlchemyError:
         return _database_error("Unable to leave team")
 
