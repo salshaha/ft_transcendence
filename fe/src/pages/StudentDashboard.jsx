@@ -905,10 +905,16 @@ function TasksPage({
 
 function SettingsPage({ student, onSaveAccount, onRequestPasswordReset }) {
   const [email, setEmail] = useState(student.email)
+  const [newPassword, setNewPassword] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
   const [currentPassword, setCurrentPassword] = useState("")
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
+
+  useEffect(() => {
+    setEmail(student.email)
+  }, [student.email])
 
   const saveDetails = async (event) => {
     event.preventDefault()
@@ -917,6 +923,16 @@ function SettingsPage({ student, onSaveAccount, onRequestPasswordReset }) {
       setError("Enter a valid email address.")
       return
     }
+    if (newPassword) {
+      if (newPassword.length < 8) {
+        setError("New password must be at least 8 characters.")
+        return
+      }
+      if (newPassword !== confirmPassword) {
+        setError("New passwords do not match.")
+        return
+      }
+    }
     if (!currentPassword) {
       setError("Enter your current password to save changes.")
       return
@@ -924,8 +940,10 @@ function SettingsPage({ student, onSaveAccount, onRequestPasswordReset }) {
     setError("")
     setSaving(true)
     try {
-      await onSaveAccount({ email, currentPassword })
+      await onSaveAccount({ email, currentPassword, newPassword: newPassword || undefined })
       setCurrentPassword("")
+      setNewPassword("")
+      setConfirmPassword("")
       setMessage("Your personal information has been updated.")
     } catch (requestError) {
       setError(requestError.message)
@@ -990,6 +1008,48 @@ function SettingsPage({ student, onSaveAccount, onRequestPasswordReset }) {
                   setMessage("")
                   setError("")
                 }}
+                className="theme-control mt-2 w-full rounded-xl border border-[#003C43]/10 bg-white px-4 py-3 text-sm text-[#003C43] outline-none transition focus:border-[#6D5BD0] focus:ring-4 focus:ring-[#6D5BD0]/10"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="new-password"
+                className="text-[10px] font-bold text-[#587376]"
+              >
+                New password
+              </label>
+              <input
+                id="new-password"
+                type="password"
+                value={newPassword}
+                onChange={(event) => {
+                  setNewPassword(event.target.value)
+                  setMessage("")
+                  setError("")
+                }}
+                autoComplete="new-password"
+                placeholder="Leave blank to keep your current password"
+                className="theme-control mt-2 w-full rounded-xl border border-[#003C43]/10 bg-white px-4 py-3 text-sm text-[#003C43] outline-none transition focus:border-[#6D5BD0] focus:ring-4 focus:ring-[#6D5BD0]/10"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="confirm-password"
+                className="text-[10px] font-bold text-[#587376]"
+              >
+                Confirm new password
+              </label>
+              <input
+                id="confirm-password"
+                type="password"
+                value={confirmPassword}
+                onChange={(event) => {
+                  setConfirmPassword(event.target.value)
+                  setMessage("")
+                  setError("")
+                }}
+                autoComplete="new-password"
+                placeholder="Repeat your new password"
                 className="theme-control mt-2 w-full rounded-xl border border-[#003C43]/10 bg-white px-4 py-3 text-sm text-[#003C43] outline-none transition focus:border-[#6D5BD0] focus:ring-4 focus:ring-[#6D5BD0]/10"
               />
             </div>
@@ -1245,11 +1305,13 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
     }
   }
 
-  async function handleSaveAccount({ email, currentPassword }) {
-    await updateStudentAccount({ email, currentPassword })
-    const updatedProfile = { ...dashboard.student, email }
+  async function handleSaveAccount({ email, currentPassword, newPassword }) {
+    const response = await updateStudentAccount({ email, currentPassword, newPassword })
+    const updatedEmail = response?.user?.email || email
+    const updatedProfile = { ...dashboard.student, email: updatedEmail }
     setDashboard((current) => ({ ...current, student: updatedProfile }))
     setProfile(updatedProfile)
+    return response
   }
 
   function handleTaskCreated(task) {

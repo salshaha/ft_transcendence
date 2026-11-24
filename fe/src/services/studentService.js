@@ -41,13 +41,15 @@ export function openStudentProjectRequirements(projectId) {
   window.open(`${API_URL}/api/student/projects/${projectId}/requirements`, "_blank", "noopener,noreferrer");
 }
 
-export function updateStudentAccount({ email, currentPassword }) {
+export function updateStudentAccount({ email, currentPassword, newPassword }) {
+  const payload = {
+    current_password: currentPassword,
+  };
+  if (email !== undefined) payload.email = email;
+  if (newPassword) payload.new_password = newPassword;
   return apiRequest("/api/update_info", {
     method: "PUT",
-    payload: {
-      email,
-      current_password: currentPassword,
-    },
+    payload,
   });
 }
 
