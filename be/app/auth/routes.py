@@ -11,6 +11,7 @@ from app.extensions import db
 from app.models.password_reset import PasswordResetToken
 from app.models.user import User
 from app.security.csrf import get_csrf_token
+from app.security.rate_limit import limiter, get_remote_address
 from app.services.auth_service import (
     clear_user_session,
     get_authenticated_user,
@@ -68,6 +69,7 @@ def session_info():
 
 
 @auth_bp.route("/register", methods=["POST"])
+@limiter.limit("5 per hour", key_func=get_remote_address)
 def register():
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -109,6 +111,7 @@ def register():
 
 
 @auth_bp.route("/login", methods=["POST"])
+@limiter.limit("10 per minute", key_func=get_remote_address)
 def login():
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -267,6 +270,7 @@ def logout():
 
 
 @auth_bp.route("/password-reset/request", methods=["POST"])
+@limiter.limit("3 per hour", key_func=get_remote_address)
 def request_password_reset():
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -299,6 +303,7 @@ def request_password_reset():
 
 
 @auth_bp.route("/password-reset/confirm", methods=["POST"])
+@limiter.limit("5 per hour", key_func=get_remote_address)
 def confirm_password_reset():
     data = request.get_json(silent=True)
     if not isinstance(data, dict):

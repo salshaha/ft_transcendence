@@ -17,7 +17,7 @@ from app.services.instructor_service import (
     update_project,
     upload_project_requirements,
 )
-from app.services.storage import StorageError
+from app.services.storage import StorageError, StorageValidationError
 from app.services.microsoft_graph_service import (
     MicrosoftGraphError,
     sync_instructor_courses,
@@ -164,8 +164,10 @@ def upload_requirements(project_id):
         return jsonify({"project": project}), 200
     except LookupError as exc:
         return jsonify({"message": str(exc)}), 404
-    except Exception as exc:  # StorageValidationError etc
+    except StorageValidationError as exc:
         return jsonify({"message": str(exc)}), 400
+    except StorageError:
+        return jsonify({"message": "Unable to store requirements"}), 500
     except SQLAlchemyError:
         return _database_error("Unable to upload requirements")
 

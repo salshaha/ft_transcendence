@@ -6,6 +6,9 @@ python-dotenv
 Werkzeug
 email-validator
 flask-cors
+flask-sock
+Flask-Limiter[redis]>=3.8,<5
+reportlab>=4.2,<5
 msal>=1.30.0
 cryptography>=42.0.0
 requests>=2.31.0

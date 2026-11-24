@@ -73,6 +73,21 @@ MICROSOFT_GRAPH_SCOPES = ("User.Read", "EduRoster.ReadBasic")
 # Uploads are written outside the Flask static folder and streamed back only
 # after authorization. See app/services/storage.py.
 MAX_CONTENT_LENGTH = env_int("MAX_CONTENT_LENGTH_BYTES", 110 * 1024 * 1024)
+MAX_JSON_CONTENT_LENGTH = env_int(
+    "MAX_JSON_CONTENT_LENGTH_BYTES", 2 * 1024 * 1024
+)
+# Keep non-file request parsing and URL sizes bounded even when a client sends
+# many form fields or oversized query strings.
+MAX_FORM_MEMORY_SIZE = env_int("MAX_FORM_MEMORY_SIZE_BYTES", 2 * 1024 * 1024)
+MAX_FORM_PARTS = env_int("MAX_FORM_PARTS", 200)
+MAX_URL_LENGTH = env_int("MAX_URL_LENGTH", 8192)
+RATELIMIT_STORAGE_URI = os.getenv("RATE_LIMIT_STORAGE_URI", "memory://").strip()
+RATELIMIT_DEFAULT = os.getenv("API_RATE_LIMIT", "300 per hour").strip()
+RATELIMIT_APPLICATION = os.getenv(
+    "API_GLOBAL_RATE_LIMIT", "1200 per hour"
+).strip()
+RATELIMIT_HEADERS_ENABLED = True
+RATELIMIT_STRATEGY = "fixed-window"
 STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "local").strip().lower()
 STORAGE_ROOT = os.getenv(
     "STORAGE_ROOT", str(PROJECT_ROOT / "be" / "uploads")

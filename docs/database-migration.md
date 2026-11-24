@@ -22,6 +22,7 @@ The migration history is:
                          so autogenerate stays clean
 f2b106ff08e8               Adds grade, feedback, submission, and workflow tables
 9e295a365101               Adds project details and requirements-file metadata
+b3a91d8702f4               Adds the user activity and audit event feed
 ```
 
 The baseline migration uses `IF NOT EXISTS` on tables and indexes, and

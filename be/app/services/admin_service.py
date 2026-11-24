@@ -3,6 +3,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from sqlalchemy import func
 
 from app.extensions import db
+from app.models.activity_event import ActivityEvent
 from app.models.student_dashboard import Course, CourseEnrollment, Project, Task, Team
 from app.models.submission import Submission
 from app.models.user import User
@@ -68,6 +69,7 @@ def get_analytics(start_value=None, end_value=None):
         "teams": Team.created_at,
         "tasks": Task.created_at,
         "submissions": Submission.submitted_at,
+        "activity_events": ActivityEvent.created_at,
     }
     daily_counts = {
         key: _daily_count(model, start_at, end_at)
@@ -85,6 +87,33 @@ def get_analytics(start_value=None, end_value=None):
         )
         current += timedelta(days=1)
 
+    activity_count = sum(daily_counts["activity_events"].values())
+    activity_rows = (
+        db.session.query(ActivityEvent, User)
+        .outerjoin(User, ActivityEvent.actor_user_id == User.id)
+        .filter(
+            ActivityEvent.created_at >= start_at,
+            ActivityEvent.created_at < end_at,
+        )
+        .order_by(ActivityEvent.created_at.desc(), ActivityEvent.id.desc())
+        .limit(20)
+        .all()
+    )
+    recent_activity = [
+        {
+            "id": event.id,
+            "action": event.action,
+            "entity_type": event.entity_type,
+            "entity_id": event.entity_id,
+            "actor_name": (
+                f"{actor.first_name} {actor.last_name}" if actor else "Former user"
+            ),
+            "actor_role": actor.role if actor else None,
+            "occurred_at": event.created_at.isoformat(),
+        }
+        for event, actor in activity_rows
+    ]
+
     return {
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
@@ -97,6 +126,7 @@ def get_analytics(start_value=None, end_value=None):
             "teams": Team.query.count(),
             "tasks": Task.query.count(),
             "submissions": Submission.query.count(),
+            "activity_events": ActivityEvent.query.count(),
         },
         "period": {
             key: sum(values.values()) for key, values in daily_counts.items()
@@ -115,6 +145,8 @@ def get_analytics(start_value=None, end_value=None):
             .order_by(Task.status)
             .all()
         ],
+        "activity_count": activity_count,
+        "recent_activity": recent_activity,
         "timeline": timeline,
     }
 

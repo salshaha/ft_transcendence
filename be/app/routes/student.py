@@ -21,7 +21,7 @@ from app.services.student_service import (
     serialize_profile,
     submit_project,
 )
-from app.services.storage import StorageError
+from app.services.storage import StorageError, StorageValidationError
 
 student_bp = Blueprint("student", __name__)
 
@@ -192,8 +192,10 @@ def submit_project_route(team_id):
         return jsonify({"message": str(exc)}), 403
     except LookupError as exc:
         return jsonify({"message": str(exc)}), 404
-    except Exception as exc:
+    except StorageValidationError as exc:
         return jsonify({"message": str(exc)}), 400
+    except StorageError:
+        return jsonify({"message": "Unable to store submission"}), 500
     except SQLAlchemyError:
         return _database_error("Unable to submit project")
 
