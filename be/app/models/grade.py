@@ -19,6 +19,7 @@ class Grade(db.Model):
     grade = db.Column(db.Numeric(5, 2))
     feedback = db.Column(db.Text)
     published = db.Column(db.Boolean, nullable=False, server_default=db.false())
+    published_at = db.Column(db.DateTime(timezone=True))
     created_at = db.Column(
         db.DateTime(timezone=True),
         nullable=False,

@@ -97,10 +97,11 @@ def ping():
     if not connection_id:
         return jsonify({"message": "connection_id is required"}), 400
     if not presence_service.touch_connection(connection_id, student.id):
-        return jsonify({"message": "Presence connection was not found"}), 404
+        connection_id = presence_service.register_connection(student.id)
 
     return jsonify({
         "ok": True,
+        "connection_id": connection_id,
         "status": presence_service.get_status([student.id]),
     }), 200
 

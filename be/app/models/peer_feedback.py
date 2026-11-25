@@ -24,10 +24,17 @@ class PeerFeedback(db.Model):
     )
     rating = db.Column(db.Integer)
     feedback = db.Column(db.Text)
+    criteria = db.Column(db.JSON, nullable=True)
     created_at = db.Column(
         db.DateTime(timezone=True),
         nullable=False,
         server_default=db.func.current_timestamp(),
+    )
+    updated_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=False,
+        server_default=db.func.current_timestamp(),
+        onupdate=db.func.current_timestamp(),
     )
 
     project = db.relationship("Project", foreign_keys=[project_id])

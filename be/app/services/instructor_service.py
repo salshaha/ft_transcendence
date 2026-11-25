@@ -18,6 +18,7 @@ from app.models.student_dashboard import (
 from app.models.student_gpa import StudentGPA
 from app.models.submission import Submission
 from app.models.user import User
+from app.realtime import emit_grade_event
 from app.services.auth_service import get_authenticated_user
 from app.services.task_service import serialize_task
 
@@ -812,6 +813,9 @@ def get_student_profile(instructor_id, student_id):
             "grade": float(grade.grade) if grade.grade is not None else None,
             "feedback": grade.feedback,
             "published": grade.published,
+            "published_at": (
+                grade.published_at.isoformat() if grade.published_at else None
+            ),
             "updated_at": (
                 grade.updated_at.isoformat() if grade.updated_at else None
             ),
@@ -1081,6 +1085,12 @@ def save_grade(instructor_id, data):
     if student is None:
         raise LookupError("Student not found")
 
+    enrolled = CourseEnrollment.query.filter_by(
+        student_id=student.id, course_id=project.course_id
+    ).first()
+    if enrolled is None:
+        raise LookupError("Student is not enrolled in this course")
+
     grade_value = data.get("grade")
     if grade_value is not None and grade_value != "":
         try:
@@ -1091,7 +1101,12 @@ def save_grade(instructor_id, data):
         grade_value = None
 
     feedback = data.get("feedback")
-    published = bool(data.get("published", False))
+    published = data.get("published", False)
+    if isinstance(published, str):
+        published = published.strip().lower() in {"1", "true", "yes", "on"}
+    else:
+        published = bool(published)
+    now = datetime.now(timezone.utc)
 
     grade = Grade.query.filter_by(
         student_id=student_id, project_id=project_id
@@ -1103,6 +1118,7 @@ def save_grade(instructor_id, data):
             grade=grade_value,
             feedback=feedback,
             published=published,
+            published_at=now if published else None,
         )
         db.session.add(grade)
         db.session.flush()
@@ -1115,18 +1131,25 @@ def save_grade(instructor_id, data):
             old_feedback=grade.feedback,
             new_feedback=feedback,
         )
-        # set changed_by later by route; placeholder
         db.session.add(audit)
         grade.grade = grade_value
         grade.feedback = feedback
+        if published and not grade.published:
+            grade.published_at = now
+        elif not published:
+            grade.published_at = None
         grade.published = published
 
     db.session.commit()
-    return {
+    result = {
         "id": grade.id,
         "student_id": grade.student_id,
         "project_id": grade.project_id,
         "grade": float(grade.grade) if grade.grade is not None else None,
         "feedback": grade.feedback,
         "published": grade.published,
+        "published_at": grade.published_at.isoformat() if grade.published_at else None,
     }
+    if published:
+        emit_grade_event(result)
+    return result

@@ -22,6 +22,11 @@ from app.services.instructor_service import (
     update_project,
     upload_project_requirements,
 )
+from app.services.peer_feedback_service import (
+    get_instructor_project,
+    get_project_feedback,
+    list_project_feedback,
+)
 from app.services.storage import StorageError
 
 instructor_bp = Blueprint("instructor", __name__)
@@ -338,3 +343,39 @@ def create_or_update_grade():
         return jsonify({"message": str(exc)}), 400
     except SQLAlchemyError:
         return _database_error("Unable to save grade")
+
+
+@instructor_bp.route("/projects/<int:project_id>/peer-feedback", methods=["GET"])
+def project_peer_feedback(project_id):
+    instructor, error = get_authenticated_instructor()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+    try:
+        get_instructor_project(instructor.id, project_id)
+        items = list_project_feedback(
+            instructor.id, project_id, request.args.get("student_id")
+        )
+        return jsonify({"peer_feedback": items}), 200
+    except LookupError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except SQLAlchemyError as exc:
+        current_app.logger.exception("Unable to retrieve peer feedback: %s", exc)
+        return _database_error("Unable to retrieve peer feedback")
+
+
+@instructor_bp.route("/peer-feedback/<int:feedback_id>", methods=["GET"])
+def peer_feedback_detail(feedback_id):
+    instructor, error = get_authenticated_instructor()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+    try:
+        return jsonify({"peer_feedback": get_project_feedback(instructor.id, feedback_id)}), 200
+    except LookupError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except SQLAlchemyError as exc:
+        current_app.logger.exception("Unable to retrieve peer feedback: %s", exc)
+        return _database_error("Unable to retrieve peer feedback")

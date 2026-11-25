@@ -34,11 +34,13 @@ def create_app():
     from app.routes.task_collaboration import task_collaboration_bp
     from app.routes.tasks import tasks_bp
     from app.routes.users import users_bp
+    from app.realtime import init_realtime
     from app.security.csrf import init_csrf
     from app.services.storage import init_storage
 
     init_csrf(app)
     init_storage(app)
+    init_realtime(app)
     register_cli(app)
 
     app.register_blueprint(admin_bp, url_prefix="/api/admin")

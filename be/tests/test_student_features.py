@@ -302,12 +302,15 @@ class StudentFeatureTests(unittest.TestCase):
         self.assertEqual(ping.status_code, 200)
         self.assertTrue(ping.get_json()["ok"])
 
-        missing = self.client.post(
+        reconnected = self.client.post(
             "/api/presence/ping",
             json={"connection_id": "unknown"},
             headers=headers,
         )
-        self.assertEqual(missing.status_code, 404)
+        self.assertEqual(reconnected.status_code, 200)
+        reconnected_id = reconnected.get_json()["connection_id"]
+        self.assertTrue(reconnected_id)
+        self.presence.unregister_connection(reconnected_id)
 
         self.presence.unregister_connection(connection_id)
         self.connections.remove(connection_id)

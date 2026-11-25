@@ -142,6 +142,7 @@ class TeamMember(db.Model):
         nullable=False,
         server_default=db.func.current_timestamp(),
     )
+    last_read_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     team = db.relationship("Team", back_populates="members")
     student = db.relationship("User", foreign_keys=[student_id])

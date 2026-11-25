@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.extensions import db
@@ -15,6 +15,10 @@ from app.services.admin_service import (
     remove_student,
     update_course,
     update_user_admin,
+)
+from app.services.peer_feedback_service import (
+    get_any_feedback,
+    list_all_feedback,
 )
 
 admin_bp = Blueprint("admin", __name__)
@@ -195,3 +199,36 @@ def remove_student_route(course_id, student_id):
         return jsonify({"message": str(exc)}), 404
     except SQLAlchemyError:
         return _database_error("Unable to remove student")
+
+
+@admin_bp.route("/peer-feedback", methods=["GET"])
+def peer_feedback_list():
+    admin, error = get_authenticated_admin()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+    try:
+        items = list_all_feedback(
+            request.args.get("project_id"), request.args.get("student_id")
+        )
+        return jsonify({"peer_feedback": items}), 200
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except SQLAlchemyError as exc:
+        current_app.logger.exception("Unable to retrieve peer feedback: %s", exc)
+        return _database_error("Unable to retrieve peer feedback")
+
+
+@admin_bp.route("/peer-feedback/<int:feedback_id>", methods=["GET"])
+def peer_feedback_detail(feedback_id):
+    admin, error = get_authenticated_admin()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+    try:
+        return jsonify({"peer_feedback": get_any_feedback(feedback_id)}), 200
+    except LookupError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except SQLAlchemyError as exc:
+        current_app.logger.exception("Unable to retrieve peer feedback: %s", exc)
+        return _database_error("Unable to retrieve peer feedback")

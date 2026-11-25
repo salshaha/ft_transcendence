@@ -1,11 +1,11 @@
 from datetime import datetime, timezone
 
+from flask import current_app
 from sqlalchemy import func, nullslast, or_, text
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.extensions import db
 from app.models.grade import Grade
-from app.models.peer_feedback import PeerFeedback
 from app.models.student_dashboard import (
     Course,
     CourseEnrollment,
@@ -16,8 +16,15 @@ from app.models.student_dashboard import (
 )
 from app.models.submission import Submission
 from app.models.user import User
+from app.realtime import emit_submission_event, revoke_team_access
 from app.services.auth_service import get_authenticated_user
 from app.services import presence_service
+from app.services.peer_feedback_service import (
+    peer_feedback_rules,
+    project_has_ended,
+    save_peer_feedback,
+)
+from app.services.storage import FILE_RULES, StorageError
 
 PROFICIENCY_LABELS = {
     1: "Beginner",
@@ -27,6 +34,75 @@ PROFICIENCY_LABELS = {
     5: "Expert",
 }
 CLOSED_TEAM_STATUSES = {"closed", "complete", "completed", "locked", "submitted"}
+LOCKED_TEAM_STATUSES = {"locked", "restricted", "submitted", "closed", "complete", "completed"}
+
+
+def submission_file_rules():
+    rule = FILE_RULES["project_submission"]
+    return {
+        "accepted_extensions": sorted(rule.extensions),
+        "accepted_mime_types": sorted(rule.mime_types),
+        "max_size_bytes": int(current_app.config[rule.limit_config_key]),
+    }
+
+
+def _deadline_utc(project):
+    deadline = project.deadline
+    if deadline is None:
+        return None
+    if deadline.tzinfo is None:
+        return deadline.replace(tzinfo=timezone.utc)
+    return deadline.astimezone(timezone.utc)
+
+
+def _submission_result(submission, deadline):
+    submitted_at = submission.submitted_at
+    if submitted_at is not None and submitted_at.tzinfo is None:
+        submitted_at = submitted_at.replace(tzinfo=timezone.utc)
+    on_time = deadline is None or (
+        submitted_at is not None and submitted_at <= deadline
+    )
+    return {
+        "id": submission.id,
+        "team_id": submission.team_id,
+        "project_id": submission.team.project_id if submission.team else None,
+        "submitted_by": submission.submitted_by,
+        "submitter": (
+            {
+                "id": submission.submitter.id,
+                "name": f"{submission.submitter.first_name} {submission.submitter.last_name}",
+            }
+            if submission.submitter else None
+        ),
+        "submitted_at": submitted_at.isoformat() if submitted_at else None,
+        "deadline": deadline.isoformat() if deadline else None,
+        "status": "on_time" if on_time else "late",
+        "on_time": on_time,
+        "file": {
+            "key": submission.file_key,
+            "original_name": submission.original_name,
+            "content_type": submission.content_type,
+            "size": submission.size,
+            "sha256": submission.sha256,
+            "url": f"/api/student/teams/{submission.team_id}/submission/file",
+        },
+    }
+
+
+def _serialize_membership_team(student_id, team_id):
+    team = (
+        Team.query.options(joinedload(Team.project))
+        .filter(Team.id == team_id)
+        .first()
+    )
+    if team is None:
+        raise LookupError("Team not found")
+    membership = TeamMember.query.filter_by(
+        team_id=team_id, student_id=student_id
+    ).first()
+    if membership is None:
+        raise PermissionError("You are not a member of this team")
+    return team
 
 
 def get_authenticated_student():
@@ -45,6 +121,7 @@ def _team_join_state(student_id, team, member_count=None):
     if member_count is None:
         member_count = TeamMember.query.filter_by(team_id=team.id).count()
     max_members = team.project.max_members_per_team
+    min_members = team.project.min_members_per_team
     is_member = any(
         member.student_id == student_id for member in getattr(team, "members", [])
     )
@@ -67,23 +144,32 @@ def _team_join_state(student_id, team, member_count=None):
     )
     status = (team.status or "").strip().lower()
     available_spots = max(0, max_members - member_count)
-    reasons = []
+    hard_reasons = []
     if is_member:
-        reasons.append("You are already a member of this team")
-    if already_in_project:
-        reasons.append("Leave your current team before joining another team")
+        hard_reasons.append("You are already a member of this team")
     if status in CLOSED_TEAM_STATUSES:
-        reasons.append("Team is not accepting new members")
+        hard_reasons.append("Team is not accepting new members")
     if available_spots <= 0:
-        reasons.append("Team is full")
+        hard_reasons.append("Team is full")
+    join_blocked_reason = " ".join(hard_reasons) if hard_reasons else None
+    if already_in_project and not hard_reasons:
+        join_blocked_reason = "Leave your current team before joining another team"
+    can_join_now = len(hard_reasons) == 0 and not already_in_project
     return {
         "is_member": is_member,
         "already_in_project": already_in_project,
-        "can_join": not reasons,
-        "join_blocked_reason": " ".join(reasons) if reasons else None,
+        "requires_leave_current_team": already_in_project and not is_member,
+        "can_join": can_join_now,
+        "can_join_after_leaving": len(hard_reasons) == 0 and not is_member,
+        "join_blocked_reason": join_blocked_reason,
         "current_member_count": member_count,
+        "min_members": min_members,
         "max_members": max_members,
         "available_spots": available_spots,
+        "is_full": available_spots <= 0,
+        "is_closed": status in CLOSED_TEAM_STATUSES,
+        "meets_min_size": member_count >= min_members,
+        "min_size_deficit": max(0, min_members - member_count),
     }
 
 
@@ -135,6 +221,7 @@ def serialize_team(team, viewer_id=None):
         return None
     member_count = len(getattr(team, "members", []))
     max_members = team.project.max_members_per_team
+    min_members = team.project.min_members_per_team
     return {
         "id": team.id,
         "name": team.name,
@@ -146,14 +233,20 @@ def serialize_team(team, viewer_id=None):
             "title": team.project.title,
             "name": team.project.title,
             "description": team.project.description,
+            "deadline": team.project.deadline.isoformat() if team.project.deadline else None,
+            "peer_feedback_available": project_has_ended(team.project),
+            "peer_feedback_rules": peer_feedback_rules(),
             "course": {
                 "id": team.project.course.id,
                 "name": team.project.course.name,
             },
         },
         "current_member_count": member_count,
+        "min_members": min_members,
         "max_members": max_members,
         "available_spots": max(0, max_members - member_count),
+        "meets_min_size": member_count >= min_members,
+        "min_size_deficit": max(0, min_members - member_count),
         "members": serialize_team_members(team, viewer_id),
     }
 
@@ -194,6 +287,7 @@ def serialize_current_project(student_id, viewer_id=None, course_ids=None):
             "semester": project.course.semester,
         },
         "team": serialize_team(team, viewer_id) if team else None,
+        "submission_file_rules": submission_file_rules(),
     }
 
 
@@ -385,6 +479,10 @@ def join_team(student_id, team_id):
     if (team.status or "").strip().lower() in CLOSED_TEAM_STATUSES:
         return None, ("Team is not accepting new members", 409)
 
+    restriction = _team_restriction_reason(team)
+    if restriction:
+        return None, (restriction, 409)
+
     membership = TeamMember.query.filter_by(
         team_id=team.id, student_id=student_id
     ).first()
@@ -396,6 +494,7 @@ def join_team(student_id, team_id):
         .filter(
             TeamMember.student_id == student_id,
             Team.project_id == team.project_id,
+            TeamMember.team_id != team.id,
         )
         .first()
     )
@@ -453,7 +552,10 @@ def get_course_project(student_id, course_id):
     ).first()
     if enrolled is None:
         return None
-    course = Course.query.options(joinedload(Course.projects)).get(course_id)
+    course = Course.query.options(
+        joinedload(Course.instructor),
+        joinedload(Course.projects),
+    ).get(course_id)
     if course is None or not course.projects:
         return None
 
@@ -472,24 +574,57 @@ def get_course_project(student_id, course_id):
                 "content_type": project.requirements_content_type,
                 "size": project.requirements_size,
             } if project.requirements_file_key else None,
+            "submission_file_rules": submission_file_rules(),
+            "peer_feedback_available": project_has_ended(project),
+            "peer_feedback_rules": peer_feedback_rules(),
         }
 
     projects = [
         serialize_project(project)
         for project in sorted(course.projects, key=lambda item: item.id, reverse=True)
     ]
+    classmates = (
+        User.query.join(CourseEnrollment, CourseEnrollment.student_id == User.id)
+        .filter(CourseEnrollment.course_id == course.id, User.role == "student")
+        .order_by(User.first_name.asc(), User.last_name.asc(), User.id.asc())
+        .all()
+    )
     return {
-        "course": {"id": course.id, "name": course.name},
+        "course": {
+            "id": course.id,
+            "name": course.name,
+            "instructor": {
+                "id": course.instructor.id,
+                "name": f"{course.instructor.first_name} {course.instructor.last_name}",
+                "first_name": course.instructor.first_name,
+                "last_name": course.instructor.last_name,
+                "email": course.instructor.email,
+            } if course.instructor else None,
+        },
         "projects": projects,
         "project": projects[0],
+        "classmates": [
+            {
+                "id": student.id,
+                "name": f"{student.first_name} {student.last_name}",
+                "first_name": student.first_name,
+                "last_name": student.last_name,
+                "email": student.email if student.id == student_id else None,
+                "is_self": student.id == student_id,
+                "profile_picture": student.profile_picture,
+                "avatar_url": f"/api/users/{student.id}/avatar" if student.profile_picture else None,
+            }
+            for student in classmates
+        ],
     }
 
 
-def get_course_teams(student_id, course_id, project_id=None):
+def get_course_teams(student_id, course_id, project_id=None, search=None, availability=None):
     data = get_course_project(student_id, course_id)
     if data is None:
         return None
 
+    project_ids = [project["id"] for project in data.get("projects", [])]
     selected_project = data["project"]
     if project_id is not None:
         try:
@@ -506,30 +641,58 @@ def get_course_teams(student_id, course_id, project_id=None):
         )
         if selected_project is None:
             return None
+        project_ids = [selected_project_id]
 
     data["project"] = selected_project
-    teams = (
+    query = (
         Team.query.options(
-            selectinload(Team.members).joinedload(TeamMember.student)
+            joinedload(Team.project).joinedload(Project.course),
+            selectinload(Team.members).joinedload(TeamMember.student),
         )
-        .filter(Team.project_id == selected_project["id"])
+        .filter(Team.project_id.in_(project_ids))
         .order_by(Team.name.asc(), Team.id.asc())
-        .all()
     )
+    if isinstance(search, str) and search.strip():
+        query = query.filter(Team.name.ilike(f"%{search.strip()}%"))
+    teams = query.all()
 
     serialized_teams = []
+    availability = (availability or "").strip().lower()
     for team in teams:
         members = serialize_team_members(team, student_id)
         state = _team_join_state(student_id, team, len(members))
+        is_available = (
+            not state.get("is_member")
+            and not state.get("is_closed")
+            and not state.get("is_full")
+        )
+        if availability == "available" and not is_available:
+            continue
+        if availability == "full" and not state.get("is_full"):
+            continue
+        if availability == "closed" and not state.get("is_closed"):
+            continue
         serialized_teams.append({
             "id": team.id,
             "name": team.name,
             "status": team.status,
             "leader_id": team.leader_id,
+            "description": team.project.description,
+            "project": {
+                "id": team.project.id,
+                "title": team.project.title,
+                "name": team.project.title,
+                "course": {
+                    "id": team.project.course.id,
+                    "name": team.project.course.name,
+                },
+            },
             "members": members,
+            "is_available": is_available,
             **state,
         })
     data["teams"] = serialized_teams
+    data["filters"] = {"search": search or "", "availability": availability}
     return data
 
 
@@ -588,11 +751,30 @@ def create_team(student_id, data):
     }
 
 
+def _team_restriction_reason(team):
+    status = (team.status or "").strip().lower()
+    submission = Submission.query.filter_by(team_id=team.id).first()
+    now = datetime.now(timezone.utc)
+    deadline = team.project.deadline
+    if deadline is not None and deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=timezone.utc)
+    if status in LOCKED_TEAM_STATUSES:
+        return "This team is locked and cannot be changed right now."
+    if submission is not None:
+        return "This team has already submitted the project and membership cannot be changed."
+    if deadline is not None and deadline < now:
+        return "The project deadline has passed, so team membership cannot be changed."
+    return None
+
+
 def leave_team(student_id, team_id):
     _lock_team_assignment(student_id)
     team = (
         db.session.query(Team)
-        .options(joinedload(Team.project).joinedload(Project.course))
+        .options(
+            joinedload(Team.project).joinedload(Project.course),
+            selectinload(Team.members).joinedload(TeamMember.student),
+        )
         .filter(Team.id == team_id)
         .with_for_update(of=Team)
         .one_or_none()
@@ -606,26 +788,131 @@ def leave_team(student_id, team_id):
     if membership is None:
         raise LookupError("You are not a member of this team")
 
+    restriction = _team_restriction_reason(team)
+    if restriction:
+        raise ValueError(restriction)
+
     db.session.delete(membership)
     db.session.flush()
 
-    remaining = TeamMember.query.filter_by(team_id=team_id).count()
+    remaining_members = (
+        TeamMember.query.options(joinedload(TeamMember.student))
+        .filter_by(team_id=team_id)
+        .order_by(TeamMember.joined_at.asc(), TeamMember.student_id.asc())
+        .all()
+    )
+    remaining = len(remaining_members)
     if team.leader_id == student_id:
-        new_leader = (
-            TeamMember.query.filter_by(team_id=team_id)
-            .order_by(TeamMember.student_id.asc())
-            .first()
-        )
+        new_leader = remaining_members[0] if remaining_members else None
         team.leader_id = new_leader.student_id if new_leader else None
 
     db.session.commit()
+    revoke_team_access(student_id, team_id)
+    refreshed = (
+        Team.query.options(
+            selectinload(Team.members).joinedload(TeamMember.student),
+            joinedload(Team.project).joinedload(Project.course),
+        )
+        .filter(Team.id == team_id)
+        .first()
+    )
     return {
         "message": "Left team successfully",
         "team_id": team.id,
-        "team": serialize_team(team, None),
+        "team": serialize_team(refreshed, student_id),
         "current_member_count": remaining,
+        "min_members": team.project.min_members_per_team,
         "max_members": team.project.max_members_per_team,
         "available_spots": max(0, team.project.max_members_per_team - remaining),
+        "meets_min_size": remaining >= team.project.min_members_per_team,
+    }
+
+
+def remove_team_member(actor_id, team_id, member_id):
+    _lock_team_assignment(member_id)
+    team = (
+        db.session.query(Team)
+        .options(
+            joinedload(Team.project).joinedload(Project.course),
+            selectinload(Team.members).joinedload(TeamMember.student),
+        )
+        .filter(Team.id == team_id)
+        .with_for_update(of=Team)
+        .one_or_none()
+    )
+    if team is None:
+        raise LookupError("Team not found")
+    if team.leader_id != actor_id:
+        raise PermissionError("Only the team leader can remove members")
+    if int(member_id) == int(actor_id):
+        raise ValueError("Team leader cannot remove themselves. Transfer leadership or leave the team.")
+
+    membership = TeamMember.query.filter_by(team_id=team_id, student_id=member_id).first()
+    if membership is None:
+        raise LookupError("Member not found in this team")
+
+    restriction = _team_restriction_reason(team)
+    if restriction:
+        raise ValueError(restriction)
+
+    db.session.delete(membership)
+    db.session.commit()
+    revoke_team_access(member_id, team_id)
+    refreshed = (
+        Team.query.options(
+            selectinload(Team.members).joinedload(TeamMember.student),
+            joinedload(Team.project).joinedload(Project.course),
+        )
+        .filter(Team.id == team_id)
+        .first()
+    )
+    remaining = len(refreshed.members) if refreshed else 0
+    return {
+        "message": "Member removed successfully",
+        "team": serialize_team(refreshed, actor_id),
+        "current_member_count": remaining,
+    }
+
+
+def transfer_team_leadership(actor_id, team_id, new_leader_id):
+    team = (
+        db.session.query(Team)
+        .options(
+            joinedload(Team.project).joinedload(Project.course),
+            selectinload(Team.members).joinedload(TeamMember.student),
+        )
+        .filter(Team.id == team_id)
+        .with_for_update(of=Team)
+        .one_or_none()
+    )
+    if team is None:
+        raise LookupError("Team not found")
+    if team.leader_id != actor_id:
+        raise PermissionError("Only the team leader can transfer leadership")
+    if int(new_leader_id) == int(actor_id):
+        raise ValueError("You are already the team leader")
+
+    membership = TeamMember.query.filter_by(team_id=team_id, student_id=new_leader_id).first()
+    if membership is None:
+        raise LookupError("Selected member is not in this team")
+
+    restriction = _team_restriction_reason(team)
+    if restriction:
+        raise ValueError(restriction)
+
+    team.leader_id = int(new_leader_id)
+    db.session.commit()
+    refreshed = (
+        Team.query.options(
+            selectinload(Team.members).joinedload(TeamMember.student),
+            joinedload(Team.project).joinedload(Project.course),
+        )
+        .filter(Team.id == team_id)
+        .first()
+    )
+    return {
+        "message": "Leadership transferred successfully",
+        "team": serialize_team(refreshed, actor_id),
     }
 
 
@@ -690,45 +977,34 @@ def get_team_details(student_id, team_id):
         raise LookupError("Team not found")
 
     is_member = any(m.student_id == student_id for m in team.members)
-    is_instructor = False
-    # allow instructor/admin handled by route; here student only
     if not is_member:
         raise PermissionError("You are not a member of this team")
 
-    return {
-        "id": team.id,
-        "name": team.name,
-        "status": team.status,
-        "leader_id": team.leader_id,
-        "project": {
-            "id": team.project.id,
-            "course": {"id": team.project.course.id, "name": team.project.course.name},
-        },
-        "members": [
-            {**member, "student_id": member["id"]}
-            for member in serialize_team_members(team, student_id)
-        ],
-    }
+    data = serialize_team(team, student_id)
+    data["members"] = [
+        {**member, "student_id": member["id"]} for member in data["members"]
+    ]
+    return data
 
 
 def submit_project(student_id, team_id, file_storage):
-    membership = TeamMember.query.filter_by(
-        team_id=team_id, student_id=student_id
-    ).first()
-    if membership is None:
-        raise PermissionError("You are not a member of this team")
+    team = _serialize_membership_team(student_id, team_id)
+    deadline = _deadline_utc(team.project)
+    if deadline is not None and datetime.now(timezone.utc) > deadline:
+        raise ValueError(
+            "The project deadline has passed. Late submissions are not allowed."
+        )
 
-    team = Team.query.get(team_id)
-    if team is None:
-        raise LookupError("Team not found")
-
-    storage = None
-    from flask import current_app
+    member_count = TeamMember.query.filter_by(team_id=team.id).count()
+    min_members = team.project.min_members_per_team
+    if member_count < min_members:
+        raise ValueError(
+            f"Team must have at least {min_members} members before submission. "
+            f"Current members: {member_count}."
+        )
 
     storage = current_app.extensions["storage"]
-    stored = storage.save_upload(
-        file_storage, "project_submission", team.id
-    )
+    stored = storage.save_upload(file_storage, "project_submission", team.id)
 
     submission = Submission.query.filter_by(team_id=team.id).first()
     if submission is None:
@@ -755,141 +1031,91 @@ def submit_project(student_id, team_id, file_storage):
             storage.delete(old_key)
 
     db.session.commit()
-    return {
-        "id": submission.id,
-        "team_id": submission.team_id,
-        "submitted_by": submission.submitted_by,
-        "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else None,
-        "file": {
-            "key": submission.file_key,
-            "original_name": submission.original_name,
-            "content_type": submission.content_type,
-            "size": submission.size,
-            "sha256": submission.sha256,
-        },
-    }
+    result = _submission_result(submission, deadline)
+    emit_submission_event(result)
+    return result
 
 
 def get_submission(student_id, team_id):
-    membership = TeamMember.query.filter_by(
-        team_id=team_id, student_id=student_id
-    ).first()
-    if membership is None:
-        raise PermissionError("You are not a member of this team")
-
-    submission = Submission.query.filter_by(team_id=team_id).first()
+    team = _serialize_membership_team(student_id, team_id)
+    submission = Submission.query.filter_by(team_id=team.id).first()
     if submission is None:
         return None
-    return {
-        "id": submission.id,
-        "team_id": submission.team_id,
-        "submitted_by": submission.submitted_by,
-        "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else None,
-        "file": {
-            "key": submission.file_key,
-            "original_name": submission.original_name,
-            "content_type": submission.content_type,
-            "size": submission.size,
-            "sha256": submission.sha256,
-        },
-    }
+    return _submission_result(submission, _deadline_utc(team.project))
 
 
-def save_peer_feedback(student_id, data):
-    project_id = data.get("project_id")
-    to_student_id = data.get("to_student_id")
-    if project_id is None or to_student_id is None:
-        raise ValueError("project_id and to_student_id are required")
+def read_submission_file(student_id, team_id):
+    team = _serialize_membership_team(student_id, team_id)
+    submission = Submission.query.filter_by(team_id=team.id).first()
+    if submission is None:
+        raise LookupError("No submission has been uploaded for this team")
+    storage = current_app.extensions["storage"]
     try:
-        project_id = int(project_id)
-        to_student_id = int(to_student_id)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("project_id and to_student_id must be integers") from exc
+        stream = storage.open(submission.file_key)
+    except (StorageError, OSError) as exc:
+        raise StorageError("Unable to read the submitted file") from exc
+    return stream, submission.content_type, submission.original_name
 
-    project = Project.query.get(project_id)
-    if project is None:
-        raise LookupError("Project not found")
 
-    # student must be in a team for this project
-    membership = (
-        TeamMember.query.join(Team)
-        .filter(TeamMember.student_id == student_id, Team.project_id == project.id)
-        .first()
-    )
-    if membership is None:
-        raise PermissionError("You are not part of a team for this project")
-
-    recipient_membership = (
-        TeamMember.query.join(Team)
-        .filter(
-            TeamMember.student_id == to_student_id, Team.project_id == project.id
-        )
-        .first()
-    )
-    if recipient_membership is None:
-        raise LookupError("Recipient is not part of a team for this project")
-    if int(to_student_id) == int(student_id):
-        raise ValueError("Cannot provide feedback to yourself")
-
-    rating = data.get("rating")
-    if rating is not None and rating != "":
-        try:
-            rating = int(rating)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("rating must be an integer") from exc
-        if rating < 1 or rating > 5:
-            raise ValueError("rating must be between 1 and 5")
-    else:
-        rating = None
-
-    feedback_text = data.get("feedback")
-
-    pf = PeerFeedback.query.filter_by(
-        project_id=project.id,
-        from_student_id=student_id,
-        to_student_id=to_student_id,
-    ).first()
-    if pf is None:
-        pf = PeerFeedback(
-            project_id=project.id,
-            from_student_id=student_id,
-            to_student_id=to_student_id,
-            rating=rating,
-            feedback=feedback_text,
-        )
-        db.session.add(pf)
-    else:
-        pf.rating = rating
-        pf.feedback = feedback_text
-
-    db.session.commit()
+def _serialize_student_grade(grade):
+    published = bool(grade.published)
     return {
-        "id": pf.id,
-        "project_id": pf.project_id,
-        "from_student_id": pf.from_student_id,
-        "to_student_id": pf.to_student_id,
-        "rating": pf.rating,
-        "feedback": pf.feedback,
+        "id": grade.id,
+        "student_id": grade.student_id,
+        "project_id": grade.project_id,
+        "project_title": grade.project.title if grade.project else None,
+        "course_id": grade.project.course_id if grade.project else None,
+        "course_title": (
+            grade.project.course.name
+            if grade.project and grade.project.course
+            else None
+        ),
+        "grade": float(grade.grade) if published and grade.grade is not None else None,
+        "feedback": grade.feedback if published else None,
+        "published": published,
+        "status": "Published" if published else "Not Published Yet",
+        "published_at": grade.published_at.isoformat() if published and grade.published_at else None,
+        "updated_at": grade.updated_at.isoformat() if grade.updated_at else None,
     }
 
 
 def get_my_grades(student_id):
     grades = (
         Grade.query.filter_by(student_id=student_id)
-        .options(joinedload(Grade.project))
+        .options(joinedload(Grade.project).joinedload(Project.course))
         .order_by(Grade.updated_at.desc())
         .all()
     )
-    return [
-        {
-            "id": g.id,
-            "project_id": g.project_id,
-            "project_title": g.project.title if g.project else None,
-            "grade": float(g.grade) if g.grade is not None else None,
-            "feedback": g.feedback,
-            "published": g.published,
-            "updated_at": g.updated_at.isoformat() if g.updated_at else None,
-        }
-        for g in grades
-        if g.published
-    ]
+    serialized = [_serialize_student_grade(grade) for grade in grades]
+    courses = (
+        Course.query.join(CourseEnrollment, CourseEnrollment.course_id == Course.id)
+        .filter(CourseEnrollment.student_id == student_id)
+        .options(selectinload(Course.projects))
+        .order_by(Course.name.asc(), Course.id.asc())
+        .all()
+    )
+    grouped_courses = []
+    for course in courses:
+        items = [item for item in serialized if item["course_id"] == course.id]
+        published_values = [
+            item["grade"]
+            for item in items
+            if item["published"] and item["grade"] is not None
+        ]
+        grouped_courses.append(
+            {
+                "id": course.id,
+                "name": course.name,
+                "academic_year": course.academic_year,
+                "semester": course.semester,
+                "course_grade": (
+                    round(sum(published_values) / len(published_values), 2)
+                    if published_values
+                    else None
+                ),
+                "final_grade": None,
+                "final_grade_available": False,
+                "grades": items,
+            }
+        )
+    return {"grades": serialized, "courses": grouped_courses}
