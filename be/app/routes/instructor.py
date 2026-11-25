@@ -14,11 +14,17 @@ from app.services.instructor_service import (
     get_dashboard,
     get_instructor_submission,
     get_project_submissions,
+    get_grade_audit,
     get_project_teams,
     get_student_avatar_owner,
     get_student_profile,
+    get_team_kanban,
+    list_instructor_grades,
+    publish_all_grades,
     save_grade,
     serialize_project,
+    set_grade_published,
+    update_grade,
     update_project,
     upload_project_requirements,
 )
@@ -338,3 +344,122 @@ def create_or_update_grade():
         return jsonify({"message": str(exc)}), 400
     except SQLAlchemyError:
         return _database_error("Unable to save grade")
+
+
+@instructor_bp.route("/grades", methods=["GET"])
+def list_grades():
+    instructor, error = get_authenticated_instructor()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+
+    filters = {
+        "course_id": request.args.get("course_id"),
+        "project_id": request.args.get("project_id"),
+        "team_id": request.args.get("team_id"),
+        "student_id": request.args.get("student_id"),
+    }
+    try:
+        return jsonify({"grades": list_instructor_grades(instructor.id, filters)}), 200
+    except LookupError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except SQLAlchemyError:
+        return _database_error("Unable to retrieve grades")
+
+
+@instructor_bp.route("/grades/publish-all", methods=["POST"])
+def publish_all():
+    instructor, error = get_authenticated_instructor()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+
+    data = request.get_json(silent=True) or {}
+    try:
+        result = publish_all_grades(instructor.id, data)
+        return jsonify(result), 200
+    except LookupError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except SQLAlchemyError:
+        return _database_error("Unable to publish grades")
+
+
+@instructor_bp.route("/grades/<int:grade_id>/audit", methods=["GET"])
+def grade_audit(grade_id):
+    instructor, error = get_authenticated_instructor()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+
+    try:
+        return jsonify(get_grade_audit(instructor.id, grade_id)), 200
+    except LookupError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except SQLAlchemyError:
+        return _database_error("Unable to retrieve grade history")
+
+
+@instructor_bp.route("/grades/<int:grade_id>/publish", methods=["PUT"])
+def publish_grade(grade_id):
+    instructor, error = get_authenticated_instructor()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+
+    data = request.get_json(silent=True) or {}
+    try:
+        published = bool(data.get("published", True))
+        grade = set_grade_published(instructor.id, grade_id, published)
+        return jsonify({"grade": grade}), 200
+    except LookupError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except SQLAlchemyError:
+        return _database_error("Unable to update publication status")
+
+
+@instructor_bp.route("/grades/<int:grade_id>", methods=["PUT"])
+def edit_grade(grade_id):
+    instructor, error = get_authenticated_instructor()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+
+    data = request.get_json(silent=True) or {}
+    try:
+        return jsonify({"grade": update_grade(instructor.id, grade_id, data)}), 200
+    except LookupError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except SQLAlchemyError:
+        return _database_error("Unable to update grade")
+
+
+@instructor_bp.route("/teams/<int:team_id>/kanban", methods=["GET"])
+def team_kanban(team_id):
+    instructor, error = get_authenticated_instructor()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+
+    project_id = request.args.get("project_id")
+    if project_id not in (None, ""):
+        try:
+            project_id = int(project_id)
+        except (TypeError, ValueError):
+            return jsonify({"message": "project_id must be an integer"}), 400
+
+    try:
+        return jsonify(get_team_kanban(instructor.id, team_id, project_id)), 200
+    except LookupError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except SQLAlchemyError:
+        return _database_error("Unable to retrieve the team board")

@@ -1,6 +1,9 @@
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+from math import isfinite
 
 from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.extensions import db
@@ -17,6 +20,7 @@ from app.models.student_dashboard import (
 )
 from app.models.student_gpa import StudentGPA
 from app.models.submission import Submission
+from app.models.task_collaboration import TaskAttachment, TaskComment
 from app.models.user import User
 from app.services.auth_service import get_authenticated_user
 from app.services.task_service import serialize_task
@@ -70,7 +74,11 @@ def _course_query(instructor_id):
 
 def _serialize_course_projects(course):
     return [
-        {"id": project.id, "title": project.title}
+        {
+            "id": project.id,
+            "title": project.title,
+            "max_grade": float(project.max_grade) if project.max_grade else 100.0,
+        }
         for project in sorted(course.projects, key=lambda item: item.id, reverse=True)
     ]
 
@@ -186,6 +194,7 @@ def get_projects(instructor_id):
             "prd": project.prd,
             "min_members_per_team": project.min_members_per_team,
             "max_members_per_team": project.max_members_per_team,
+            "max_grade": float(project.max_grade) if project.max_grade else 100.0,
             "team_count": len(project.teams),
             "teams": [
                 {
@@ -865,6 +874,7 @@ def serialize_project(project):
         "deadline": project.deadline.isoformat() if project.deadline else None,
         "min_members_per_team": project.min_members_per_team,
         "max_members_per_team": project.max_members_per_team,
+        "max_grade": float(project.max_grade) if project.max_grade is not None else 100.0,
         "prd": project.prd,
         "requirements": {
             "file_key": project.requirements_file_key,
@@ -882,6 +892,11 @@ def create_project(instructor_id, course_id, data):
     if course is None:
         raise LookupError("Course not found")
 
+    if Project.query.filter_by(course_id=course.id).first() is not None:
+        raise ValueError(
+            "This course already has a project. Each course can have only one project."
+        )
+
     min_members = _parse_int(
         data.get("min_members_per_team"), "min_members_per_team", 1
     )
@@ -896,6 +911,7 @@ def create_project(instructor_id, course_id, data):
         )
 
     deadline = _parse_datetime(data.get("deadline"))
+    max_grade = _parse_max_grade(data.get("max_grade", 100))
     project = Project(
         course_id=course.id,
         title=(data.get("title") or "").strip() or None,
@@ -903,10 +919,17 @@ def create_project(instructor_id, course_id, data):
         deadline=deadline,
         min_members_per_team=min_members,
         max_members_per_team=max_members,
+        max_grade=max_grade,
         prd=data.get("prd") or data.get("description") or "",
     )
     db.session.add(project)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError as exc:
+        db.session.rollback()
+        raise ValueError(
+            "This course already has a project. Each course can have only one project."
+        ) from exc
     return serialize_project(project)
 
 
@@ -945,6 +968,16 @@ def update_project(instructor_id, project_id, data):
         project.prd = data.get("prd") or project.prd
     if "deadline" in data:
         project.deadline = _parse_datetime(data.get("deadline"))
+    if "max_grade" in data:
+        max_grade = _parse_max_grade(data.get("max_grade"))
+        highest_grade = db.session.query(func.max(Grade.grade)).filter(
+            Grade.project_id == project.id
+        ).scalar()
+        if highest_grade is not None and Decimal(str(highest_grade)) > max_grade:
+            raise ValueError(
+                "max_grade cannot be lower than an existing grade on this project"
+            )
+        project.max_grade = max_grade
 
     db.session.commit()
     return serialize_project(project)
@@ -1063,12 +1096,68 @@ def get_project_submissions(instructor_id, project_id):
     ]
 
 
-def save_grade(instructor_id, data):
-    student_id = data.get("student_id")
-    project_id = data.get("project_id")
-    if student_id is None or project_id is None:
-        raise ValueError("student_id and project_id are required")
+ONE_PROJECT_MESSAGE = (
+    "This course already has a project. Each course can have only one project."
+)
 
+TASK_STATUSES = ("todo", "in_progress", "review", "done")
+
+
+def _iso(value):
+    return value.isoformat() if value is not None else None
+
+
+def _require_id(value, field_name):
+    if value is None or value == "":
+        raise ValueError(f"{field_name} is required")
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be an integer")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be an integer") from exc
+    if parsed < 1:
+        raise ValueError(f"{field_name} must be a positive integer")
+    return parsed
+
+
+def _parse_max_grade(value):
+    if value is None or value == "":
+        return Decimal("100")
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError("max_grade must be a number") from exc
+    if not parsed.is_finite() or parsed <= 0 or parsed > Decimal("999.99"):
+        raise ValueError("max_grade must be between 0.01 and 999.99")
+    return parsed.quantize(Decimal("0.01"))
+
+
+def _parse_grade_value(value, max_grade):
+    if value is None or value == "":
+        return None
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError("grade must be a number") from exc
+    if not parsed.is_finite():
+        raise ValueError("grade must be a number")
+    if parsed < 0 or parsed > Decimal(str(max_grade)):
+        raise ValueError(
+            f"grade must be between 0 and {max_grade} for this project"
+        )
+    return parsed.quantize(Decimal("0.01"))
+
+
+def _parse_feedback(value):
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("feedback must be text")
+    return value.strip() or None
+
+
+def _authorized_project(instructor_id, project_id):
     project = (
         Project.query.join(Course, Course.id == Project.course_id)
         .filter(Project.id == project_id, Course.instructor_id == instructor_id)
@@ -1076,57 +1165,490 @@ def save_grade(instructor_id, data):
     )
     if project is None:
         raise LookupError("Project not found")
+    return project
+
+
+def _authorized_course(instructor_id, course_id):
+    course = Course.query.filter_by(
+        id=course_id, instructor_id=instructor_id
+    ).first()
+    if course is None:
+        raise LookupError("Course not found")
+    return course
+
+
+def _authorized_grade(instructor_id, grade_id):
+    grade = (
+        Grade.query.join(Project, Project.id == Grade.project_id)
+        .join(Course, Course.id == Project.course_id)
+        .filter(Grade.id == grade_id, Course.instructor_id == instructor_id)
+        .first()
+    )
+    if grade is None:
+        raise LookupError("Grade not found")
+    return grade
+
+
+def _authorized_team(instructor_id, team_id, project_id=None):
+    query = (
+        Team.query.join(Project, Project.id == Team.project_id)
+        .join(Course, Course.id == Project.course_id)
+        .filter(Team.id == team_id, Course.instructor_id == instructor_id)
+    )
+    if project_id is not None:
+        query = query.filter(Team.project_id == project_id)
+    team = query.first()
+    if team is None:
+        raise LookupError("Team not found")
+    return team
+
+
+def _serialize_grade(grade):
+    student = grade.student
+    project = grade.project
+    return {
+        "id": grade.id,
+        "student_id": grade.student_id,
+        "student_name": (
+            f"{student.first_name} {student.last_name}" if student else None
+        ),
+        "student_email": student.email if student else None,
+        "project_id": grade.project_id,
+        "project_title": project.title if project else None,
+        "course_id": project.course_id if project else None,
+        "course_name": project.course.name if project and project.course else None,
+        "grade": float(grade.grade) if grade.grade is not None else None,
+        "max_grade": float(project.max_grade) if project and project.max_grade else 100.0,
+        "feedback": grade.feedback,
+        "published": grade.published,
+        "published_at": _iso(grade.published_at),
+        "created_at": _iso(grade.created_at),
+        "updated_at": _iso(grade.updated_at),
+    }
+
+
+def _record_grade_audit(grade, instructor_id, old_grade, old_feedback):
+    if grade.grade == old_grade and grade.feedback == old_feedback:
+        return
+    db.session.add(
+        GradeAudit(
+            grade_id=grade.id,
+            changed_by=instructor_id,
+            old_grade=old_grade,
+            new_grade=grade.grade,
+            old_feedback=old_feedback,
+            new_feedback=grade.feedback,
+        )
+    )
+
+
+def save_grade(instructor_id, data):
+    if not isinstance(data, dict):
+        raise ValueError("A grade payload is required")
+    student_id = _require_id(data.get("student_id"), "student_id")
+    project_id = _require_id(data.get("project_id"), "project_id")
+    team_id = data.get("team_id")
+    if team_id not in (None, ""):
+        team_id = _require_id(team_id, "team_id")
+
+    project = _authorized_project(instructor_id, project_id)
+    if team_id is not None:
+        team = _authorized_team(instructor_id, team_id, project_id=project.id)
+        membership = TeamMember.query.filter_by(
+            team_id=team.id, student_id=student_id
+        ).first()
+        if membership is None:
+            raise LookupError("Student is not a member of the selected team")
 
     student = User.query.filter_by(id=student_id, role="student").first()
     if student is None:
         raise LookupError("Student not found")
+    if CourseEnrollment.query.filter_by(
+        course_id=project.course_id, student_id=student_id
+    ).first() is None:
+        raise LookupError("Student is not enrolled in this course")
 
-    grade_value = data.get("grade")
-    if grade_value is not None and grade_value != "":
-        try:
-            grade_value = float(grade_value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("grade must be a number") from exc
-    else:
-        grade_value = None
-
-    feedback = data.get("feedback")
+    grade_value = _parse_grade_value(data.get("grade"), project.max_grade)
+    feedback = _parse_feedback(data.get("feedback"))
     published = bool(data.get("published", False))
 
     grade = Grade.query.filter_by(
-        student_id=student_id, project_id=project_id
+        student_id=student_id, project_id=project.id
     ).first()
     if grade is None:
         grade = Grade(
             student_id=student_id,
-            project_id=project_id,
+            project_id=project.id,
             grade=grade_value,
             feedback=feedback,
             published=published,
+            published_at=datetime.now(timezone.utc) if published else None,
         )
         db.session.add(grade)
         db.session.flush()
-    else:
-        audit = GradeAudit(
-            grade_id=grade.id,
-            changed_by=instructor_id,
-            old_grade=grade.grade,
-            new_grade=grade_value,
-            old_feedback=grade.feedback,
-            new_feedback=feedback,
+        db.session.add(
+            GradeAudit(
+                grade_id=grade.id,
+                changed_by=instructor_id,
+                old_grade=None,
+                new_grade=grade_value,
+                old_feedback=None,
+                new_feedback=feedback,
+            )
         )
-        # set changed_by later by route; placeholder
-        db.session.add(audit)
+    else:
+        old_grade = grade.grade
+        old_feedback = grade.feedback
         grade.grade = grade_value
         grade.feedback = feedback
         grade.published = published
+        grade.published_at = (
+            datetime.now(timezone.utc) if published else None
+        )
+        _record_grade_audit(grade, instructor_id, old_grade, old_feedback)
 
+    try:
+        db.session.commit()
+    except IntegrityError as exc:
+        db.session.rollback()
+        raise ValueError("Unable to save this grade") from exc
+    return _serialize_grade(grade)
+
+
+def update_grade(instructor_id, grade_id, data):
+    grade = _authorized_grade(instructor_id, grade_id)
+    if "student_id" in data and _require_id(data["student_id"], "student_id") != grade.student_id:
+        raise ValueError("A grade's student cannot be changed")
+    if "project_id" in data and _require_id(data["project_id"], "project_id") != grade.project_id:
+        raise ValueError("A grade's project cannot be changed")
+
+    max_grade = grade.project.max_grade if grade.project else Decimal("100")
+    grade_value = _parse_grade_value(data.get("grade", grade.grade), max_grade)
+    feedback = _parse_feedback(
+        data.get("feedback", grade.feedback)
+    )
+
+    old_grade = grade.grade
+    old_feedback = grade.feedback
+    grade.grade = grade_value
+    grade.feedback = feedback
+    grade.published = False
+    grade.published_at = None
+    _record_grade_audit(grade, instructor_id, old_grade, old_feedback)
     db.session.commit()
+    return _serialize_grade(grade)
+
+
+def set_grade_published(instructor_id, grade_id, published):
+    grade = _authorized_grade(instructor_id, grade_id)
+    if published:
+        max_grade = grade.project.max_grade if grade.project else Decimal("100")
+        _parse_grade_value(grade.grade, max_grade)
+        if grade.grade is None:
+            raise ValueError("A grade with no score cannot be published")
+        grade.published_at = datetime.now(timezone.utc)
+    else:
+        grade.published_at = None
+    grade.published = bool(published)
+    db.session.commit()
+    return _serialize_grade(grade)
+
+
+def publish_all_grades(instructor_id, scope):
+    if not isinstance(scope, dict):
+        raise ValueError("A publishing scope is required")
+    course_id = _require_id(scope.get("course_id"), "course_id")
+    course = _authorized_course(instructor_id, course_id)
+
+    project_id = scope.get("project_id")
+    project = None
+    if project_id not in (None, "", "all"):
+        project_id = _require_id(project_id, "project_id")
+        project = _authorized_project(instructor_id, project_id)
+        if project.course_id != course.id:
+            raise ValueError("The selected project does not belong to this course")
+
+    team_id = scope.get("team_id")
+    team = None
+    if team_id not in (None, "", "all"):
+        team_id = _require_id(team_id, "team_id")
+        team = _authorized_team(
+            instructor_id, team_id, project_id=project.id if project else None
+        )
+        if team.project.course_id != course.id:
+            raise ValueError("The selected team does not belong to this course")
+        project_id = team.project_id
+
+    query = (
+        Grade.query.join(Project, Project.id == Grade.project_id)
+        .join(Course, Course.id == Project.course_id)
+        .filter(
+            Course.instructor_id == instructor_id,
+            Course.id == course.id,
+            Grade.published.is_(False),
+        )
+        .options(joinedload(Grade.student), joinedload(Grade.project))
+    )
+    if project_id is not None:
+        query = query.filter(Grade.project_id == project_id)
+    if team_id is not None:
+        query = query.join(
+            TeamMember,
+            (TeamMember.student_id == Grade.student_id)
+            & (TeamMember.team_id == team_id),
+        )
+
+    published = []
+    skipped = []
+    now = datetime.now(timezone.utc)
+    for grade in query.all():
+        max_grade = grade.project.max_grade if grade.project else Decimal("100")
+        try:
+            _parse_grade_value(grade.grade, max_grade)
+            if grade.grade is None:
+                raise ValueError("grade is empty")
+        except ValueError:
+            skipped.append(
+                {
+                    "id": grade.id,
+                    "student_name": _serialize_grade(grade)["student_name"],
+                    "reason": "grade is missing or outside the allowed range",
+                }
+            )
+            continue
+        grade.published = True
+        grade.published_at = now
+        published.append(grade)
+
+    if published:
+        db.session.commit()
     return {
-        "id": grade.id,
-        "student_id": grade.student_id,
-        "project_id": grade.project_id,
-        "grade": float(grade.grade) if grade.grade is not None else None,
-        "feedback": grade.feedback,
-        "published": grade.published,
+        "published_count": len(published),
+        "skipped_count": len(skipped),
+        "published": [_serialize_grade(grade) for grade in published],
+        "skipped": skipped,
+    }
+
+
+def get_grade_audit(instructor_id, grade_id):
+    grade = _authorized_grade(instructor_id, grade_id)
+    audits = (
+        GradeAudit.query.filter_by(grade_id=grade.id)
+        .options(joinedload(GradeAudit.changer))
+        .order_by(GradeAudit.changed_at.desc(), GradeAudit.id.desc())
+        .all()
+    )
+    return {
+        "grade": _serialize_grade(grade),
+        "audits": [
+            {
+                "id": audit.id,
+                "grade_id": audit.grade_id,
+                "changed_by": audit.changed_by,
+                "changed_by_name": (
+                    f"{audit.changer.first_name} {audit.changer.last_name}"
+                    if audit.changer
+                    else "Unknown instructor"
+                ),
+                "old_grade": float(audit.old_grade) if audit.old_grade is not None else None,
+                "new_grade": float(audit.new_grade) if audit.new_grade is not None else None,
+                "old_feedback": audit.old_feedback,
+                "new_feedback": audit.new_feedback,
+                "changed_at": _iso(audit.changed_at),
+            }
+            for audit in audits
+        ],
+    }
+
+
+def list_instructor_grades(instructor_id, filters=None):
+    filters = filters or {}
+    course_id = filters.get("course_id")
+    project_id = filters.get("project_id")
+    team_id = filters.get("team_id")
+    student_id = filters.get("student_id")
+
+    if course_id not in (None, "", "all"):
+        _authorized_course(instructor_id, _require_id(course_id, "course_id"))
+        course_id = _require_id(course_id, "course_id")
+    else:
+        course_id = None
+
+    project = None
+    if project_id not in (None, "", "all"):
+        project = _authorized_project(instructor_id, _require_id(project_id, "project_id"))
+        if course_id is not None and project.course_id != course_id:
+            raise ValueError("The selected project does not belong to this course")
+        project_id = project.id
+    else:
+        project_id = None
+
+    team = None
+    if team_id not in (None, "", "all"):
+        team = _authorized_team(
+            instructor_id, _require_id(team_id, "team_id"), project_id=project_id
+        )
+        if course_id is not None and team.project.course_id != course_id:
+            raise ValueError("The selected team does not belong to this course")
+        team_id = team.id
+    else:
+        team_id = None
+
+    if student_id not in (None, "", "all"):
+        student_id = _require_id(student_id, "student_id")
+    else:
+        student_id = None
+
+    query = (
+        Grade.query.join(Project, Project.id == Grade.project_id)
+        .join(Course, Course.id == Project.course_id)
+        .filter(Course.instructor_id == instructor_id)
+        .options(
+            joinedload(Grade.student),
+            joinedload(Grade.project).joinedload(Project.course),
+        )
+        .order_by(Grade.updated_at.desc(), Grade.id.desc())
+    )
+    if course_id is not None:
+        query = query.filter(Course.id == course_id)
+    if project_id is not None:
+        query = query.filter(Grade.project_id == project_id)
+    if student_id is not None:
+        query = query.filter(Grade.student_id == student_id)
+    if team_id is not None:
+        query = query.join(
+            TeamMember,
+            (TeamMember.student_id == Grade.student_id)
+            & (TeamMember.team_id == team_id),
+        ).filter(TeamMember.team_id == team_id)
+
+    return [_serialize_grade(grade) for grade in query.all()]
+
+
+def get_team_kanban(instructor_id, team_id, project_id=None):
+    if project_id not in (None, ""):
+        project_id = _require_id(project_id, "project_id")
+    team = (
+        Team.query.options(
+            selectinload(Team.members).joinedload(TeamMember.student)
+        )
+        .filter_by(id=_require_id(team_id, "team_id"))
+        .first()
+    )
+    if team is None:
+        raise LookupError("Team not found")
+    team = _authorized_team(
+        instructor_id, team.id, project_id=project_id
+    )
+    team = (
+        Team.query.options(
+            selectinload(Team.members).joinedload(TeamMember.student)
+        )
+        .filter_by(id=team.id)
+        .first()
+    )
+    project = team.project
+
+    tasks = (
+        Task.query.filter_by(team_id=team.id)
+        .options(
+            joinedload(Task.assignee),
+            joinedload(Task.creator),
+            joinedload(Task.team)
+            .joinedload(Team.project)
+            .joinedload(Project.course),
+            joinedload(Task.team)
+            .selectinload(Team.members)
+            .joinedload(TeamMember.student),
+        )
+        .order_by(Task.status.asc(), Task.due_date.asc(), Task.id.asc())
+        .all()
+    )
+    feedback_rows = (
+        TaskComment.query.filter(
+            TaskComment.task_id.in_([task.id for task in tasks]),
+            TaskComment.kind == "instructor_feedback",
+        )
+        .order_by(TaskComment.created_at.asc())
+        .all()
+    )
+    feedback_by_task = {}
+    for row in feedback_rows:
+        feedback_by_task.setdefault(row.task_id, []).append(
+            {
+                "id": row.id,
+                "body": row.body,
+                "author_name": (
+                    f"{row.author.first_name} {row.author.last_name}"
+                    if row.author
+                    else "Instructor"
+                ),
+                "created_at": _iso(row.created_at),
+            }
+        )
+
+    now = datetime.now(timezone.utc)
+    task_counts = {"total": len(tasks), "overdue": 0}
+    for status in TASK_STATUSES:
+        task_counts[status] = 0
+    tasks_by_status = {status: [] for status in TASK_STATUSES}
+    serialized_tasks = []
+    for task in tasks:
+        item = serialize_task(task)
+        due_date = task.due_date
+        if due_date is not None and due_date.tzinfo is None:
+            due_date = due_date.replace(tzinfo=timezone.utc)
+        item["is_overdue"] = bool(
+            task.status != "done" and due_date is not None and due_date < now
+        )
+        item["instructor_feedback"] = feedback_by_task.get(task.id, [])
+        task_counts[task.status] = task_counts.get(task.status, 0) + 1
+        if item["is_overdue"]:
+            task_counts["overdue"] += 1
+        tasks_by_status.setdefault(task.status, []).append(item)
+        serialized_tasks.append(item)
+
+    members = []
+    for membership in team.members:
+        student = membership.student
+        if student is None:
+            continue
+        members.append(
+            {
+                "id": student.id,
+                "student_id": student.student_id,
+                "first_name": student.first_name,
+                "last_name": student.last_name,
+                "full_name": f"{student.first_name} {student.last_name}",
+                "email": student.email,
+                "profile_picture": student.profile_picture,
+                "is_leader": team.leader_id == student.id,
+                "joined_at": _iso(membership.joined_at),
+            }
+        )
+
+    grades = list_instructor_grades(
+        instructor_id,
+        {"course_id": project.course_id, "project_id": project.id, "team_id": team.id},
+    )
+
+    return {
+        "read_only": True,
+        "team": {
+            "id": team.id,
+            "name": team.name,
+            "status": team.status,
+            "leader_id": team.leader_id,
+            "members": members,
+        },
+        "project": {
+            "id": project.id,
+            "title": project.title,
+            "max_grade": float(project.max_grade) if project.max_grade else 100.0,
+            "course": {"id": project.course.id, "name": project.course.name},
+        },
+        "task_counts": task_counts,
+        "tasks_by_status": tasks_by_status,
+        "tasks": serialized_tasks,
+        "grades": grades,
     }

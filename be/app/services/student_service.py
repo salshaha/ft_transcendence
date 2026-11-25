@@ -672,9 +672,19 @@ def get_my_grades(student_id):
             "id": g.id,
             "project_id": g.project_id,
             "project_title": g.project.title if g.project else None,
+            "course_id": g.project.course_id if g.project else None,
+            "course_name": (
+                g.project.course.name if g.project and g.project.course else None
+            ),
             "grade": float(g.grade) if g.grade is not None else None,
+            "max_grade": (
+                float(g.project.max_grade)
+                if g.project and g.project.max_grade
+                else 100.0
+            ),
             "feedback": g.feedback,
             "published": g.published,
+            "published_at": g.published_at.isoformat() if g.published_at else None,
             "updated_at": g.updated_at.isoformat() if g.updated_at else None,
         }
         for g in grades
