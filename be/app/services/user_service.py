@@ -34,7 +34,7 @@ def _commit():
         raise
 
 
-def create_user(
+def build_user(
     *,
     first_name,
     last_name,
@@ -51,7 +51,7 @@ def create_user(
         if error:
             raise UserValidationError(error)
 
-    if role not in VALID_ROLES:
+    if not isinstance(role, str) or role not in VALID_ROLES:
         raise UserValidationError("Role must be student, instructor, or admin")
 
     normalized_email = normalize_email(email)
@@ -83,6 +83,27 @@ def create_user(
         last_name=last_name.strip(),
         email=normalized_email,
         password_hash=generate_password_hash(password),
+        role=role,
+        student_id=student_id,
+    )
+    return user
+
+
+def create_user(
+    *,
+    first_name,
+    last_name,
+    email,
+    password,
+    role="student",
+    student_id=None,
+):
+    """Validate and create one user using the shared account rules."""
+    user = build_user(
+        first_name=first_name,
+        last_name=last_name,
+        email=email,
+        password=password,
         role=role,
         student_id=student_id,
     )

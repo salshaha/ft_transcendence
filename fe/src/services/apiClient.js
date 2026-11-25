@@ -91,3 +91,12 @@ export async function apiRequest(
   }
   return data;
 }
+
+export async function apiDownload(path) {
+  const response = await fetch(`${API_URL}${path}`, { credentials: "include" });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.message || "Unable to download this report.");
+  }
+  return response.blob();
+}

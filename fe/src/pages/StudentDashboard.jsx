@@ -8,6 +8,10 @@ import ConfirmDialog from "../components/student/ConfirmDialog"
 import FriendsPage from "../components/student/FriendsPage"
 import ProjectFeedbackPanel from "../components/student/ProjectFeedbackPanel"
 import ProjectSubmission from "../components/student/ProjectSubmission"
+import SettingsPage from "../components/SettingsPage"
+import { formatDate, statusTone } from "../components/instructor/formatters"
+import TaskDetailsModal from "../components/instructor/TaskDetailsModal"
+import MyGrades from "../components/student/MyGrades"
 import StudentTaskCreateModal from "../components/student/StudentTaskCreateModal"
 import TaskKanbanBoard from "../components/student/TaskKanbanBoard"
 import TeamChatPanel from "../components/student/TeamChatPanel"
@@ -171,6 +175,7 @@ const navItems = [
   { label: "Team Chats", icon: "chat" },
   { label: "Friends", icon: "userPlus" },
   { label: "Tasks", icon: "clipboard" },
+  { label: "My Grades", icon: "file" },
   { label: "Settings", icon: "settings" },
 ]
 
@@ -2154,12 +2159,19 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
                 onMove={handleTaskStatusChange}
                 connection={realtimeStatus}
               />
-            ) : (
+            ) : active === "My Grades" ? (
+              <MyGrades />
+            ) : active === "Settings" ? (
               <SettingsPage
-                student={student}
+                account={student}
+                accountType="student"
                 onSaveAccount={handleSaveAccount}
                 onRequestPasswordReset={onRequestPasswordReset}
               />
+            ) : (
+              <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 text-sm text-[#6d898b]">
+                This page is not available.
+              </section>
             )}
             {selectedTask && (
               <TaskDetailsModal

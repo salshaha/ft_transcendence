@@ -336,7 +336,7 @@ but not the actual developer-specific:
 ### Example `.env`
 
 ```env
-SECRET_KEY=change-this-secret-key
+SECRET_KEY=generate-a-unique-random-value-at-least-32-characters-long
 
 POSTGRES_DB=ft_transcendence
 POSTGRES_USER=postgres
@@ -350,6 +350,8 @@ DATABASE_URL=postgresql://postgres:change-this-password@localhost:5432/ft_transc
 The exact database variables may change when the PostgreSQL/Docker configuration is finalized.
 
 Never commit real passwords, API keys, tokens, or other secrets.
+
+For Microsoft sign-in, roster tokens are encrypted in local file storage using a key derived from `SECRET_KEY`. Set a unique, stable secret of at least 32 characters before connecting Microsoft accounts; changing it later requires users to sign in with Microsoft again.
 
 Additional security/storage settings (all optional for local development):
 
@@ -372,6 +374,28 @@ STORAGE_MAX_PROJECT_SUBMISSION_BYTES=104857600
 
 See `docs/foundations.md` for the authorization, CSRF, role-provisioning, and
 file-storage decisions.
+
+## Microsoft sign-in and course roster sync
+
+Create a Microsoft Entra app registration for **accounts in this organization** and add a **Web** redirect URI that exactly matches `MICROSOFT_REDIRECT_URI` (the local default is `http://localhost:5000/api/auth/microsoft/callback`). Add these values to the local `.env` file:
+
+```env
+MICROSOFT_TENANT_ID=your-tenant-id
+MICROSOFT_CLIENT_ID=your-application-client-id
+MICROSOFT_CLIENT_SECRET=your-client-secret
+MICROSOFT_REDIRECT_URI=http://localhost:5000/api/auth/microsoft/callback
+```
+
+Grant the app the delegated Microsoft Graph permissions `User.Read` and `EduRoster.ReadBasic`, then grant tenant admin consent for the roster permission. Graph's education roster endpoints require a work or school account. The app reads an instructor's taught classes and class members with delegated access; Microsoft documents `EduRoster.ReadBasic` as the least-privileged delegated permission for these operations ([class list](https://learn.microsoft.com/en-us/graph/api/educationuser-list-taughtclasses?view=graph-rest-1.0), [class members](https://learn.microsoft.com/en-us/graph/api/educationclass-list-members?view=graph-rest-1.0)).
+
+From `be/`, install backend requirements before starting Flask:
+
+```bash
+python -m pip install -r requirements.txt
+python run.py
+```
+
+The login page shows **Sign in with Microsoft** when the configuration is ready. A first-time account is created as a student and linked to its Microsoft identity; instructor accounts must already be provisioned with the matching email and instructor role. After an instructor signs in with Microsoft, open **My courses** and choose **Sync Microsoft classes**. Sync adds or updates classes and enrolls roster students; it does not remove local course enrollments. MSAL's authorization-code flow is used for the web sign-in, and its token cache is encrypted before storage ([MSAL Python authorization-code flow](https://learn.microsoft.com/en-us/entra/msal/python/getting-started/acquiring-tokens)).
 
 ---
 

@@ -63,6 +63,12 @@ export function getStudentTeams() {
   return apiRequest("/api/student/teams");
 }
 
+export function getStudentGrades() {
+  return apiRequest("/api/student/grades", {
+    errorMessage: "Unable to load your grades.",
+  });
+}
+
 export function createStudentTeam({ projectId, name }) {
   return apiRequest("/api/student/teams", {
     method: "POST",

@@ -31,6 +31,13 @@ export function logoutUser() {
   return apiRequest("/api/auth/logout", { method: "POST" });
 }
 
+export function updateAccountInfo({ email, currentPassword }) {
+  return apiRequest("/api/update_info", {
+    method: "PUT",
+    payload: { email, current_password: currentPassword },
+  });
+}
+
 export function getMicrosoftAuthStatus() {
   return apiRequest("/api/auth/microsoft/status", {
     errorMessage: "Unable to check Microsoft sign-in availability.",

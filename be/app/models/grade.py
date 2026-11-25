@@ -5,6 +5,7 @@ class Grade(db.Model):
     __tablename__ = "grades"
     __table_args__ = (
         db.UniqueConstraint("student_id", "project_id", name="uq_grades_student_project"),
+        db.CheckConstraint("grade >= 0", name="chk_grades_nonnegative"),
         db.Index("idx_grades_project", "project_id"),
         db.Index("idx_grades_student", "student_id"),
     )
