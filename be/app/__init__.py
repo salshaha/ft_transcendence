@@ -26,6 +26,7 @@ def create_app():
     from app import models  # noqa: F401
     from app.auth.routes import auth_bp, microsoft_bp
     from app.cli import register_cli
+    from app.realtime import init_realtime
     from app.routes.admin import admin_bp
     from app.routes.instructor import instructor_bp
     from app.routes.student import student_bp
@@ -33,9 +34,16 @@ def create_app():
     from app.routes.tasks import tasks_bp
     from app.routes.users import users_bp
     from app.security.csrf import init_csrf
+    from app.security.rate_limit import limiter
+    from app.security.request_validation import init_request_validation
+    from app.services.activity_service import init_activity_tracking
     from app.services.storage import init_storage
 
+    limiter.init_app(app)
     init_csrf(app)
+    init_request_validation(app)
+    init_realtime(app)
+    init_activity_tracking(app)
     init_storage(app)
     register_cli(app)
 
@@ -52,7 +60,13 @@ def create_app():
     @app.errorhandler(413)
     def request_too_large(_error):
         return jsonify({
-            "message": "The uploaded file is larger than the server limit"
+            "message": "The request body is larger than the server limit"
         }), 413
+
+    @app.errorhandler(429)
+    def rate_limit_exceeded(_error):
+        return jsonify({
+            "message": "Too many requests. Please wait and try again."
+        }), 429
 
     return app

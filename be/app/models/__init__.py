@@ -1,6 +1,7 @@
 """Import every model so Alembic autogenerate sees the complete schema."""
 
 from app.models.grade import Grade, GradeAudit
+from app.models.activity_event import ActivityEvent
 from app.models.password_reset import PasswordResetToken
 from app.models.peer_feedback import PeerFeedback
 from app.models.skill import Skill, StudentSkill
@@ -18,6 +19,7 @@ from app.models.task_collaboration import TaskAttachment, TaskComment
 from app.models.user import User
 
 __all__ = [
+    "ActivityEvent",
     "Course",
     "CourseEnrollment",
     "Grade",

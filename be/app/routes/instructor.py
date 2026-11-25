@@ -28,7 +28,12 @@ from app.services.instructor_service import (
     update_project,
     upload_project_requirements,
 )
-from app.services.storage import StorageError
+from app.services.storage import StorageError, StorageValidationError
+from app.services.microsoft_graph_service import (
+    MicrosoftGraphError,
+    sync_instructor_courses,
+)
+from app.services.microsoft_identity import MicrosoftIdentityError
 
 instructor_bp = Blueprint("instructor", __name__)
 
@@ -214,8 +219,10 @@ def upload_requirements(project_id):
         return jsonify({"project": project}), 200
     except LookupError as exc:
         return jsonify({"message": str(exc)}), 404
-    except Exception as exc:  # StorageValidationError etc
+    except StorageValidationError as exc:
         return jsonify({"message": str(exc)}), 400
+    except StorageError:
+        return jsonify({"message": "Unable to store requirements"}), 500
     except SQLAlchemyError:
         return _database_error("Unable to upload requirements")
 
@@ -285,12 +292,31 @@ def project_submissions(project_id):
         return _database_error("Unable to retrieve submissions")
 
 
+
+@instructor_bp.route("/microsoft/sync-courses", methods=["POST"])
+def sync_microsoft_courses():
+    instructor, error = get_authenticated_instructor()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+
+    try:
+        return jsonify(sync_instructor_courses(instructor)), 200
+    except MicrosoftIdentityError as exc:
+        return jsonify({"message": str(exc)}), 401
+    except MicrosoftGraphError as exc:
+        return jsonify({"message": str(exc)}), 502
+    except SQLAlchemyError:
+        return _database_error("Unable to synchronize Microsoft courses")
+
+
 @instructor_bp.route("/submissions", methods=["GET"])
 def all_submissions():
     instructor, error = get_authenticated_instructor()
     if error:
         message, status = error
         return jsonify({"message": message}), status
+
     try:
         return jsonify({"submissions": get_all_submissions(instructor.id)}), 200
     except SQLAlchemyError:
@@ -325,6 +351,7 @@ def submission_file(submission_id):
         as_attachment=_wants_download(),
         download_name=submission.original_name,
     )
+
 
 
 @instructor_bp.route("/grades", methods=["POST"])

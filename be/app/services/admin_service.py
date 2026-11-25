@@ -1,7 +1,10 @@
+from datetime import date, datetime, time, timedelta, timezone
+
 from sqlalchemy import func
 
 from app.extensions import db
-from app.models.student_dashboard import Course, CourseEnrollment, Project, Team
+from app.models.activity_event import ActivityEvent
+from app.models.student_dashboard import Course, CourseEnrollment, Project, Task, Team
 from app.models.submission import Submission
 from app.models.user import User
 from app.services.auth_service import get_authenticated_user
@@ -27,6 +30,124 @@ def get_stats():
         "projects": Project.query.count(),
         "teams": Team.query.count(),
         "submissions": Submission.query.count(),
+    }
+
+
+def parse_analytics_range(start_value=None, end_value=None):
+    """Return a validated, inclusive UTC date range, defaulting to 30 days."""
+    today = datetime.now(timezone.utc).date()
+    try:
+        end_date = date.fromisoformat(end_value) if end_value else today
+        start_date = date.fromisoformat(start_value) if start_value else end_date - timedelta(days=29)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Dates must use YYYY-MM-DD format") from exc
+    if end_date < start_date:
+        raise ValueError("End date must be on or after start date")
+    if (end_date - start_date).days > 365:
+        raise ValueError("Date range cannot exceed 366 days")
+    start_at = datetime.combine(start_date, time.min, tzinfo=timezone.utc)
+    end_at = datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=timezone.utc)
+    return start_date, end_date, start_at, end_at
+
+
+def _daily_count(timestamp_column, start_at, end_at):
+    rows = (
+        db.session.query(func.date(timestamp_column), func.count())
+        .filter(timestamp_column >= start_at, timestamp_column < end_at)
+        .group_by(func.date(timestamp_column))
+        .all()
+    )
+    return {str(day): count for day, count in rows}
+
+
+def get_analytics(start_value=None, end_value=None):
+    start_date, end_date, start_at, end_at = parse_analytics_range(
+        start_value, end_value
+    )
+    daily_models = {
+        "users": User.created_at,
+        "teams": Team.created_at,
+        "tasks": Task.created_at,
+        "submissions": Submission.submitted_at,
+        "activity_events": ActivityEvent.created_at,
+    }
+    daily_counts = {
+        key: _daily_count(model, start_at, end_at)
+        for key, model in daily_models.items()
+    }
+    timeline = []
+    current = start_date
+    while current <= end_date:
+        day = current.isoformat()
+        timeline.append(
+            {
+                "date": day,
+                **{key: values.get(day, 0) for key, values in daily_counts.items()},
+            }
+        )
+        current += timedelta(days=1)
+
+    activity_count = sum(daily_counts["activity_events"].values())
+    activity_rows = (
+        db.session.query(ActivityEvent, User)
+        .outerjoin(User, ActivityEvent.actor_user_id == User.id)
+        .filter(
+            ActivityEvent.created_at >= start_at,
+            ActivityEvent.created_at < end_at,
+        )
+        .order_by(ActivityEvent.created_at.desc(), ActivityEvent.id.desc())
+        .limit(20)
+        .all()
+    )
+    recent_activity = [
+        {
+            "id": event.id,
+            "action": event.action,
+            "entity_type": event.entity_type,
+            "entity_id": event.entity_id,
+            "actor_name": (
+                f"{actor.first_name} {actor.last_name}" if actor else "Former user"
+            ),
+            "actor_role": actor.role if actor else None,
+            "occurred_at": event.created_at.isoformat(),
+        }
+        for event, actor in activity_rows
+    ]
+
+    return {
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "totals": {
+            "users": User.query.count(),
+            "students": User.query.filter_by(role="student").count(),
+            "instructors": User.query.filter_by(role="instructor").count(),
+            "admins": User.query.filter_by(role="admin").count(),
+            "courses": Course.query.count(),
+            "teams": Team.query.count(),
+            "tasks": Task.query.count(),
+            "submissions": Submission.query.count(),
+            "activity_events": ActivityEvent.query.count(),
+        },
+        "period": {
+            key: sum(values.values()) for key, values in daily_counts.items()
+        },
+        "user_roles": [
+            {"role": role, "count": count}
+            for role, count in db.session.query(User.role, func.count())
+            .group_by(User.role)
+            .order_by(User.role)
+            .all()
+        ],
+        "task_statuses": [
+            {"status": status, "count": count}
+            for status, count in db.session.query(Task.status, func.count())
+            .group_by(Task.status)
+            .order_by(Task.status)
+            .all()
+        ],
+        "activity_count": activity_count,
+        "recent_activity": recent_activity,
+        "timeline": timeline,
     }
 
 

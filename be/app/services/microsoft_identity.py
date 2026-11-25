@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import os
+import tempfile
 from pathlib import Path
 
 import msal
@@ -18,11 +19,17 @@ class MicrosoftIdentityError(Exception):
 
 
 def is_configured():
-    return all(
+    secret_key = str(current_app.config.get("SECRET_KEY", ""))
+    has_safe_secret_key = (
+        len(secret_key) >= 32
+        and secret_key not in {"dev-secret-key", "replace-with-a-long-random-secret"}
+    )
+    return has_safe_secret_key and all(
         current_app.config.get(key)
         for key in (
             "MICROSOFT_CLIENT_ID",
             "MICROSOFT_CLIENT_SECRET",
+            "MICROSOFT_TENANT_ID",
             "MICROSOFT_AUTHORITY",
             "MICROSOFT_REDIRECT_URI",
         )
@@ -121,35 +128,12 @@ def save_token_cache(user_id, token_cache):
             os.unlink(temporary_name)
 
 
+
 def delete_token_cache(user_id):
     try:
         _token_cache_path(user_id).unlink(missing_ok=True)
     except OSError:
         pass
-
-
-def fetch_signed_in_profile(access_token):
-    try:
-        response = requests.get(
-            "https://graph.microsoft.com/v1.0/me",
-            params={"$select": "id,displayName,givenName,surname,mail,userPrincipalName"},
-            headers={"Authorization": f"Bearer {access_token}"},
-            timeout=15,
-        )
-    except requests.RequestException as exc:
-        raise MicrosoftIdentityError(
-            "Microsoft Graph could not be reached. Please try again."
-        ) from exc
-    if not response.ok:
-        raise MicrosoftIdentityError(
-            "Microsoft Graph could not retrieve your profile. Please try signing in again."
-        )
-    try:
-        return response.json()
-    except ValueError as exc:
-        raise MicrosoftIdentityError(
-            "Microsoft Graph returned an invalid response."
-        ) from exc
 
 
 def decrypt_token_cache(user_id):
@@ -158,10 +142,72 @@ def decrypt_token_cache(user_id):
         encrypted = path.read_bytes()
     except FileNotFoundError:
         return None
+
     try:
         serialized = _cache_cipher().decrypt(encrypted).decode("utf-8")
     except (InvalidToken, ValueError):
         return None
+
     cache = msal.SerializableTokenCache()
     cache.deserialize(serialized)
     return cache
+
+
+def get_graph_access_token(user_id):
+    token_cache = decrypt_token_cache(user_id)
+
+    if token_cache is None:
+        raise MicrosoftIdentityError(
+            "Sign in with Microsoft first to connect your course roster."
+        )
+
+    application = create_msal_application(token_cache)
+    accounts = application.get_accounts()
+
+    if not accounts:
+        raise MicrosoftIdentityError(
+            "Your Microsoft connection has expired. Please sign in with Microsoft again."
+        )
+
+    result = application.acquire_token_silent(
+        scopes=list(current_app.config["MICROSOFT_GRAPH_SCOPES"]),
+        account=accounts[0],
+    )
+
+    if not result or "access_token" not in result:
+        raise MicrosoftIdentityError(
+            "Your Microsoft connection has expired. Please sign in with Microsoft again."
+        )
+
+    if token_cache.has_state_changed:
+        save_token_cache(user_id, token_cache)
+
+    return result["access_token"], accounts[0].get("realm")
+
+
+def fetch_signed_in_profile(access_token):
+    try:
+        response = requests.get(
+            "https://graph.microsoft.com/v1.0/me",
+            params={
+                "$select": "id,displayName,givenName,surname,mail,userPrincipalName"
+            },
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        raise MicrosoftIdentityError(
+            "Microsoft Graph could not be reached. Please try again."
+        ) from exc
+
+    if not response.ok:
+        raise MicrosoftIdentityError(
+            "Microsoft Graph could not retrieve your profile. Please try signing in again."
+        )
+
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise MicrosoftIdentityError(
+            "Microsoft Graph returned an invalid response."
+        ) from exc

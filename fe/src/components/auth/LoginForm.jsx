@@ -16,9 +16,8 @@ export default function LoginForm({ onAuthenticated, onForgotPassword, notice = 
 
   useEffect(() => {
     getMicrosoftAuthStatus()
-      .then((status) => setMicrosoftConfigured(Boolean(status?.configured)))
+      .then((status) => setMicrosoftConfigured(Boolean(status.configured)))
       .catch(() => setMicrosoftConfigured(false));
-
     const query = new URLSearchParams(window.location.search);
     const authError = query.get("microsoft_error");
     if (authError) {
@@ -50,6 +49,11 @@ export default function LoginForm({ onAuthenticated, onForgotPassword, notice = 
     } else {
       setSuccess("Your account is ready!");
     }
+  }
+
+  function startMicrosoftLogin() {
+    const apiUrl = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "");
+    window.location.assign(`${apiUrl}/api/auth/microsoft/login`);
   }
 
   return (

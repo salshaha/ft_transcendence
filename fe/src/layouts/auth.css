@@ -271,6 +271,21 @@
   opacity: 0.65;
 }
 
+.microsoft-button {
+  border: 1px solid #b9ceca;
+  border-radius: 10px;
+  padding: 14px;
+  color: #003c43;
+  background: #fff;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.microsoft-button:hover {
+  border-color: #135d66;
+  background: #f5faf9;
+}
+
 .legal {
   margin: 24px 0 0;
   color: #6d898b;
