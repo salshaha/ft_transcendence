@@ -5,7 +5,7 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
 let csrfToken = null;
 let csrfRequest = null;
 
-async function fetchCsrfToken(force = false) {
+export async function fetchCsrfToken(force = false) {
   if (csrfToken && !force) return csrfToken;
   if (csrfRequest && !force) return csrfRequest;
 
@@ -43,6 +43,7 @@ export async function apiRequest(
     headers: extraHeaders = {},
     errorMessage,
     retryOnCsrfFailure = true,
+    signal,
   } = {},
 ) {
   const requestMethod = method.toUpperCase();
@@ -64,6 +65,7 @@ export async function apiRequest(
       credentials: "include",
       headers,
       body: requestBody,
+      signal,
     });
 
   let response = await send();

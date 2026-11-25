@@ -1,3 +1,4 @@
+
 from flask import Blueprint, current_app, jsonify, request, send_file
 from io import BytesIO
 import mimetypes
@@ -27,6 +28,11 @@ from app.services.instructor_service import (
     update_grade,
     update_project,
     upload_project_requirements,
+)
+from app.services.peer_feedback_service import (
+    get_instructor_project,
+    get_project_feedback,
+    list_project_feedback,
 )
 from app.services.storage import StorageError, StorageValidationError
 from app.services.microsoft_graph_service import (
@@ -67,6 +73,7 @@ def courses():
     if error:
         message, status = error
         return jsonify({"message": message}), status
+
     try:
         return jsonify({"courses": get_courses(instructor.id)}), 200
     except SQLAlchemyError:
@@ -79,6 +86,7 @@ def course_students(course_id):
     if error:
         message, status = error
         return jsonify({"message": message}), status
+
     try:
         students = get_course_students(instructor.id, course_id)
         if students is None:
@@ -94,8 +102,11 @@ def student_profile(student_id):
     if error:
         message, status = error
         return jsonify({"message": message}), status
+
     try:
-        return jsonify({"student": get_student_profile(instructor.id, student_id)}), 200
+        return jsonify({
+            "student": get_student_profile(instructor.id, student_id)
+        }), 200
     except LookupError as exc:
         return jsonify({"message": str(exc)}), 404
     except SQLAlchemyError:
@@ -108,6 +119,7 @@ def student_avatar(student_id):
     if error:
         message, status = error
         return jsonify({"message": message}), status
+
     try:
         student = get_student_avatar_owner(instructor.id, student_id)
     except LookupError as exc:
@@ -116,10 +128,17 @@ def student_avatar(student_id):
         return _database_error("Unable to retrieve student avatar")
 
     try:
-        stream = current_app.extensions["storage"].open(student.profile_picture)
+        stream = current_app.extensions["storage"].open(
+            student.profile_picture
+        )
     except (StorageError, OSError):
         return jsonify({"message": "Unable to read student avatar"}), 404
-    content_type = mimetypes.guess_type(student.profile_picture)[0] or "application/octet-stream"
+
+    content_type = (
+        mimetypes.guess_type(student.profile_picture)[0]
+        or "application/octet-stream"
+    )
+
     return send_file(
         stream,
         mimetype=content_type,
@@ -136,6 +155,7 @@ def create_course_project(course_id):
         return jsonify({"message": message}), status
 
     data = request.get_json(silent=True) or {}
+
     try:
         project = create_project(instructor.id, course_id, data)
         return jsonify({"project": project}), 201
@@ -158,11 +178,16 @@ def get_project(project_id):
 
     project = (
         Project.query.join(Course, Course.id == Project.course_id)
-        .filter(Project.id == project_id, Course.instructor_id == instructor.id)
+        .filter(
+            Project.id == project_id,
+            Course.instructor_id == instructor.id,
+        )
         .first()
     )
+
     if project is None:
         return jsonify({"message": "Project not found"}), 404
+
     return jsonify({"project": serialize_project(project)}), 200
 
 
@@ -174,6 +199,7 @@ def update_course_project(project_id):
         return jsonify({"message": message}), status
 
     data = request.get_json(silent=True) or {}
+
     try:
         project = update_project(instructor.id, project_id, data)
         return jsonify({"project": project}), 200
@@ -208,13 +234,19 @@ def upload_requirements(project_id):
         message, status = error
         return jsonify({"message": message}), status
 
-    file_storage = request.files.get("file") or request.files.get("requirements")
+    file_storage = (
+        request.files.get("file")
+        or request.files.get("requirements")
+    )
+
     if file_storage is None:
         return jsonify({"message": "requirements file is required"}), 400
 
     try:
         project = upload_project_requirements(
-            instructor.id, project_id, file_storage
+            instructor.id,
+            project_id,
+            file_storage,
         )
         return jsonify({"project": project}), 200
     except LookupError as exc:
@@ -238,13 +270,18 @@ def download_requirements(project_id):
 
     project = (
         Project.query.join(Course, Course.id == Project.course_id)
-        .filter(Project.id == project_id, Course.instructor_id == instructor.id)
+        .filter(
+            Project.id == project_id,
+            Course.instructor_id == instructor.id,
+        )
         .first()
     )
+
     if project is None or not project.requirements_file_key:
         return jsonify({"message": "Requirements not found"}), 404
 
     storage = current_app.extensions["storage"]
+
     try:
         stream = storage.open(project.requirements_file_key)
         data = stream.read()
@@ -256,7 +293,9 @@ def download_requirements(project_id):
         BytesIO(data),
         mimetype=project.requirements_content_type or "application/pdf",
         as_attachment=_wants_download(),
-        download_name=project.requirements_original_name or "requirements.pdf",
+        download_name=(
+            project.requirements_original_name or "requirements.pdf"
+        ),
     )
 
 
@@ -284,13 +323,15 @@ def project_submissions(project_id):
         return jsonify({"message": message}), status
 
     try:
-        submissions = get_project_submissions(instructor.id, project_id)
+        submissions = get_project_submissions(
+            instructor.id,
+            project_id,
+        )
         return jsonify({"submissions": submissions}), 200
     except LookupError as exc:
         return jsonify({"message": str(exc)}), 404
     except SQLAlchemyError:
         return _database_error("Unable to retrieve submissions")
-
 
 
 @instructor_bp.route("/microsoft/sync-courses", methods=["POST"])
@@ -318,7 +359,9 @@ def all_submissions():
         return jsonify({"message": message}), status
 
     try:
-        return jsonify({"submissions": get_all_submissions(instructor.id)}), 200
+        return jsonify({
+            "submissions": get_all_submissions(instructor.id)
+        }), 200
     except SQLAlchemyError:
         return _database_error("Unable to retrieve submissions")
 
@@ -331,13 +374,17 @@ def submission_file(submission_id):
         return jsonify({"message": message}), status
 
     try:
-        submission = get_instructor_submission(instructor.id, submission_id)
+        submission = get_instructor_submission(
+            instructor.id,
+            submission_id,
+        )
     except LookupError as exc:
         return jsonify({"message": str(exc)}), 404
     except SQLAlchemyError:
         return _database_error("Unable to retrieve submission")
 
     storage = current_app.extensions["storage"]
+
     try:
         stream = storage.open(submission.file_key)
         data = stream.read()
@@ -353,7 +400,6 @@ def submission_file(submission_id):
     )
 
 
-
 @instructor_bp.route("/grades", methods=["POST"])
 def create_or_update_grade():
     instructor, error = get_authenticated_instructor()
@@ -362,6 +408,7 @@ def create_or_update_grade():
         return jsonify({"message": message}), status
 
     data = request.get_json(silent=True) or {}
+
     try:
         grade = save_grade(instructor.id, data)
         return jsonify({"grade": grade}), 200
@@ -372,6 +419,72 @@ def create_or_update_grade():
     except SQLAlchemyError:
         return _database_error("Unable to save grade")
 
+
+# ---------------------------------------------------------------------
+# Peer feedback
+# ---------------------------------------------------------------------
+
+@instructor_bp.route(
+    "/projects/<int:project_id>/peer-feedback",
+    methods=["GET"],
+)
+def project_peer_feedback(project_id):
+    instructor, error = get_authenticated_instructor()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+
+    try:
+        get_instructor_project(instructor.id, project_id)
+
+        items = list_project_feedback(
+            instructor.id,
+            project_id,
+            request.args.get("student_id"),
+        )
+
+        return jsonify({"peer_feedback": items}), 200
+    except LookupError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except SQLAlchemyError as exc:
+        current_app.logger.exception(
+            "Unable to retrieve peer feedback: %s",
+            exc,
+        )
+        return _database_error("Unable to retrieve peer feedback")
+
+
+@instructor_bp.route(
+    "/peer-feedback/<int:feedback_id>",
+    methods=["GET"],
+)
+def peer_feedback_detail(feedback_id):
+    instructor, error = get_authenticated_instructor()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+
+    try:
+        feedback = get_project_feedback(
+            instructor.id,
+            feedback_id,
+        )
+        return jsonify({"peer_feedback": feedback}), 200
+    except LookupError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except SQLAlchemyError as exc:
+        current_app.logger.exception(
+            "Unable to retrieve peer feedback: %s",
+            exc,
+        )
+        return _database_error("Unable to retrieve peer feedback")
+
+
+# ---------------------------------------------------------------------
+# Grade management
+# ---------------------------------------------------------------------
 
 @instructor_bp.route("/grades", methods=["GET"])
 def list_grades():
@@ -386,8 +499,10 @@ def list_grades():
         "team_id": request.args.get("team_id"),
         "student_id": request.args.get("student_id"),
     }
+
     try:
-        return jsonify({"grades": list_instructor_grades(instructor.id, filters)}), 200
+        grades = list_instructor_grades(instructor.id, filters)
+        return jsonify({"grades": grades}), 200
     except LookupError as exc:
         return jsonify({"message": str(exc)}), 404
     except ValueError as exc:
@@ -404,6 +519,7 @@ def publish_all():
         return jsonify({"message": message}), status
 
     data = request.get_json(silent=True) or {}
+
     try:
         result = publish_all_grades(instructor.id, data)
         return jsonify(result), 200
@@ -415,7 +531,10 @@ def publish_all():
         return _database_error("Unable to publish grades")
 
 
-@instructor_bp.route("/grades/<int:grade_id>/audit", methods=["GET"])
+@instructor_bp.route(
+    "/grades/<int:grade_id>/audit",
+    methods=["GET"],
+)
 def grade_audit(grade_id):
     instructor, error = get_authenticated_instructor()
     if error:
@@ -423,14 +542,19 @@ def grade_audit(grade_id):
         return jsonify({"message": message}), status
 
     try:
-        return jsonify(get_grade_audit(instructor.id, grade_id)), 200
+        return jsonify(
+            get_grade_audit(instructor.id, grade_id)
+        ), 200
     except LookupError as exc:
         return jsonify({"message": str(exc)}), 404
     except SQLAlchemyError:
         return _database_error("Unable to retrieve grade history")
 
 
-@instructor_bp.route("/grades/<int:grade_id>/publish", methods=["PUT"])
+@instructor_bp.route(
+    "/grades/<int:grade_id>/publish",
+    methods=["PUT"],
+)
 def publish_grade(grade_id):
     instructor, error = get_authenticated_instructor()
     if error:
@@ -438,9 +562,14 @@ def publish_grade(grade_id):
         return jsonify({"message": message}), status
 
     data = request.get_json(silent=True) or {}
+
     try:
         published = bool(data.get("published", True))
-        grade = set_grade_published(instructor.id, grade_id, published)
+        grade = set_grade_published(
+            instructor.id,
+            grade_id,
+            published,
+        )
         return jsonify({"grade": grade}), 200
     except LookupError as exc:
         return jsonify({"message": str(exc)}), 404
@@ -450,7 +579,10 @@ def publish_grade(grade_id):
         return _database_error("Unable to update publication status")
 
 
-@instructor_bp.route("/grades/<int:grade_id>", methods=["PUT"])
+@instructor_bp.route(
+    "/grades/<int:grade_id>",
+    methods=["PUT"],
+)
 def edit_grade(grade_id):
     instructor, error = get_authenticated_instructor()
     if error:
@@ -458,8 +590,10 @@ def edit_grade(grade_id):
         return jsonify({"message": message}), status
 
     data = request.get_json(silent=True) or {}
+
     try:
-        return jsonify({"grade": update_grade(instructor.id, grade_id, data)}), 200
+        grade = update_grade(instructor.id, grade_id, data)
+        return jsonify({"grade": grade}), 200
     except LookupError as exc:
         return jsonify({"message": str(exc)}), 404
     except ValueError as exc:
@@ -468,7 +602,14 @@ def edit_grade(grade_id):
         return _database_error("Unable to update grade")
 
 
-@instructor_bp.route("/teams/<int:team_id>/kanban", methods=["GET"])
+# ---------------------------------------------------------------------
+# Team Kanban
+# ---------------------------------------------------------------------
+
+@instructor_bp.route(
+    "/teams/<int:team_id>/kanban",
+    methods=["GET"],
+)
 def team_kanban(team_id):
     instructor, error = get_authenticated_instructor()
     if error:
@@ -476,14 +617,22 @@ def team_kanban(team_id):
         return jsonify({"message": message}), status
 
     project_id = request.args.get("project_id")
+
     if project_id not in (None, ""):
         try:
             project_id = int(project_id)
         except (TypeError, ValueError):
-            return jsonify({"message": "project_id must be an integer"}), 400
+            return jsonify({
+                "message": "project_id must be an integer"
+            }), 400
 
     try:
-        return jsonify(get_team_kanban(instructor.id, team_id, project_id)), 200
+        board = get_team_kanban(
+            instructor.id,
+            team_id,
+            project_id,
+        )
+        return jsonify(board), 200
     except LookupError as exc:
         return jsonify({"message": str(exc)}), 404
     except ValueError as exc:

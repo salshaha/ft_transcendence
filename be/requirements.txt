@@ -15,3 +15,5 @@ requests>=2.31.0
 msal
 requests
 cryptography
+flask-socketio
+simple-websocket

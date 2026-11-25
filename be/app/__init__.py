@@ -29,10 +29,13 @@ def create_app():
     from app.realtime import init_realtime
     from app.routes.admin import admin_bp
     from app.routes.instructor import instructor_bp
+    from app.routes.presence import presence_bp
     from app.routes.student import student_bp
+    from app.routes.students import students_bp
     from app.routes.task_collaboration import task_collaboration_bp
     from app.routes.tasks import tasks_bp
     from app.routes.users import users_bp
+    from app.realtime import init_realtime
     from app.security.csrf import init_csrf
     from app.security.rate_limit import limiter
     from app.security.request_validation import init_request_validation
@@ -45,6 +48,7 @@ def create_app():
     init_realtime(app)
     init_activity_tracking(app)
     init_storage(app)
+    init_realtime(app)
     register_cli(app)
 
     app.register_blueprint(admin_bp, url_prefix="/api/admin")
@@ -52,7 +56,9 @@ def create_app():
     app.register_blueprint(microsoft_bp, url_prefix="/auth", name="microsoft_auth_root")
     app.register_blueprint(microsoft_bp, url_prefix="/api/auth", name="microsoft_auth_api")
     app.register_blueprint(instructor_bp, url_prefix="/api/instructor")
+    app.register_blueprint(presence_bp, url_prefix="/api/presence")
     app.register_blueprint(student_bp, url_prefix="/api/student")
+    app.register_blueprint(students_bp, url_prefix="/api/students")
     app.register_blueprint(task_collaboration_bp, url_prefix="/api")
     app.register_blueprint(tasks_bp, url_prefix="/api")
     app.register_blueprint(users_bp, url_prefix="/api")

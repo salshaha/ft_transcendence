@@ -22,6 +22,7 @@ from app.models.student_gpa import StudentGPA
 from app.models.submission import Submission
 from app.models.task_collaboration import TaskAttachment, TaskComment
 from app.models.user import User
+from app.realtime import emit_grade_event
 from app.services.auth_service import get_authenticated_user
 from app.services.task_service import serialize_task
 
@@ -821,6 +822,9 @@ def get_student_profile(instructor_id, student_id):
             "grade": float(grade.grade) if grade.grade is not None else None,
             "feedback": grade.feedback,
             "published": grade.published,
+            "published_at": (
+                grade.published_at.isoformat() if grade.published_at else None
+            ),
             "updated_at": (
                 grade.updated_at.isoformat() if grade.updated_at else None
             ),
@@ -1245,36 +1249,63 @@ def _record_grade_audit(grade, instructor_id, old_grade, old_feedback):
 def save_grade(instructor_id, data):
     if not isinstance(data, dict):
         raise ValueError("A grade payload is required")
+
     student_id = _require_id(data.get("student_id"), "student_id")
     project_id = _require_id(data.get("project_id"), "project_id")
     team_id = data.get("team_id")
+
     if team_id not in (None, ""):
         team_id = _require_id(team_id, "team_id")
+    else:
+        team_id = None
 
     project = _authorized_project(instructor_id, project_id)
+
     if team_id is not None:
-        team = _authorized_team(instructor_id, team_id, project_id=project.id)
+        team = _authorized_team(
+            instructor_id, team_id, project_id=project.id
+        )
         membership = TeamMember.query.filter_by(
             team_id=team.id, student_id=student_id
         ).first()
         if membership is None:
             raise LookupError("Student is not a member of the selected team")
 
-    student = User.query.filter_by(id=student_id, role="student").first()
+    student = User.query.filter_by(
+        id=student_id, role="student"
+    ).first()
     if student is None:
         raise LookupError("Student not found")
-    if CourseEnrollment.query.filter_by(
-        course_id=project.course_id, student_id=student_id
-    ).first() is None:
+
+    enrolled = CourseEnrollment.query.filter_by(
+        student_id=student_id,
+        course_id=project.course_id,
+    ).first()
+    if enrolled is None:
         raise LookupError("Student is not enrolled in this course")
 
-    grade_value = _parse_grade_value(data.get("grade"), project.max_grade)
+    # Keep the decimal-based validation from main.
+    grade_value = _parse_grade_value(
+        data.get("grade"), project.max_grade
+    )
     feedback = _parse_feedback(data.get("feedback"))
-    published = bool(data.get("published", False))
+
+    # Preserve support for string values such as "true" and "false".
+    published_value = data.get("published", False)
+    if isinstance(published_value, str):
+        published = published_value.strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+    else:
+        published = bool(published_value)
 
     grade = Grade.query.filter_by(
-        student_id=student_id, project_id=project.id
+        student_id=student_id,
+        project_id=project.id,
     ).first()
+
+    now = datetime.now(timezone.utc)
+
     if grade is None:
         grade = Grade(
             student_id=student_id,
@@ -1282,10 +1313,11 @@ def save_grade(instructor_id, data):
             grade=grade_value,
             feedback=feedback,
             published=published,
-            published_at=datetime.now(timezone.utc) if published else None,
+            published_at=now if published else None,
         )
         db.session.add(grade)
         db.session.flush()
+
         db.session.add(
             GradeAudit(
                 grade_id=grade.id,
@@ -1299,45 +1331,74 @@ def save_grade(instructor_id, data):
     else:
         old_grade = grade.grade
         old_feedback = grade.feedback
+
         grade.grade = grade_value
         grade.feedback = feedback
         grade.published = published
-        grade.published_at = (
-            datetime.now(timezone.utc) if published else None
+        grade.published_at = now if published else None
+
+        _record_grade_audit(
+            grade, instructor_id, old_grade, old_feedback
         )
-        _record_grade_audit(grade, instructor_id, old_grade, old_feedback)
 
     try:
         db.session.commit()
     except IntegrityError as exc:
         db.session.rollback()
         raise ValueError("Unable to save this grade") from exc
-    return _serialize_grade(grade)
+
+    result = _serialize_grade(grade)
+
+    if published:
+        emit_grade_event(result)
+
+    return result
 
 
 def update_grade(instructor_id, grade_id, data):
     grade = _authorized_grade(instructor_id, grade_id)
-    if "student_id" in data and _require_id(data["student_id"], "student_id") != grade.student_id:
+
+    if (
+        "student_id" in data
+        and _require_id(data["student_id"], "student_id") != grade.student_id
+    ):
         raise ValueError("A grade's student cannot be changed")
-    if "project_id" in data and _require_id(data["project_id"], "project_id") != grade.project_id:
+
+    if (
+        "project_id" in data
+        and _require_id(data["project_id"], "project_id") != grade.project_id
+    ):
         raise ValueError("A grade's project cannot be changed")
 
-    max_grade = grade.project.max_grade if grade.project else Decimal("100")
-    grade_value = _parse_grade_value(data.get("grade", grade.grade), max_grade)
+    max_grade = (
+        grade.project.max_grade
+        if grade.project
+        else Decimal("100")
+    )
+
+    grade_value = _parse_grade_value(
+        data.get("grade", grade.grade), max_grade
+    )
     feedback = _parse_feedback(
         data.get("feedback", grade.feedback)
     )
 
     old_grade = grade.grade
     old_feedback = grade.feedback
+
     grade.grade = grade_value
     grade.feedback = feedback
+
+    # Editing a grade invalidates its previous publication.
     grade.published = False
     grade.published_at = None
-    _record_grade_audit(grade, instructor_id, old_grade, old_feedback)
+
+    _record_grade_audit(
+        grade, instructor_id, old_grade, old_feedback
+    )
+
     db.session.commit()
     return _serialize_grade(grade)
-
 
 def set_grade_published(instructor_id, grade_id, published):
     grade = _authorized_grade(instructor_id, grade_id)
@@ -1652,3 +1713,6 @@ def get_team_kanban(instructor_id, team_id, project_id=None):
         "tasks": serialized_tasks,
         "grades": grades,
     }
+    if published:
+        emit_grade_event(result)
+    return result
