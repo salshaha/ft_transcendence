@@ -5,6 +5,7 @@ class Grade(db.Model):
     __tablename__ = "grades"
     __table_args__ = (
         db.UniqueConstraint("student_id", "project_id", name="uq_grades_student_project"),
+        db.CheckConstraint("grade >= 0", name="chk_grades_nonnegative"),
         db.Index("idx_grades_project", "project_id"),
         db.Index("idx_grades_student", "student_id"),
     )
@@ -19,6 +20,7 @@ class Grade(db.Model):
     grade = db.Column(db.Numeric(5, 2))
     feedback = db.Column(db.Text)
     published = db.Column(db.Boolean, nullable=False, server_default=db.false())
+    published_at = db.Column(db.DateTime(timezone=True))
     created_at = db.Column(
         db.DateTime(timezone=True),
         nullable=False,

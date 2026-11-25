@@ -1,11 +1,21 @@
 import { useEffect, useState } from "react"
+import SettingsPage from "../components/SettingsPage"
+import { formatDate, statusTone } from "../components/instructor/formatters"
+import TaskDetailsModal from "../components/instructor/TaskDetailsModal"
+import MyGrades from "../components/student/MyGrades"
+import StudentTaskCreateModal from "../components/student/StudentTaskCreateModal"
+import { listTasks } from "../services/taskService"
 import {
   addStudentSkill,
+  createStudentTeam,
   getAvailableSkills,
+  getStudentCourseTeams,
   getStudentCourses,
   getStudentDashboard,
   getStudentProfile,
+  getStudentTeams,
   joinStudentTeam,
+  openStudentProjectRequirements,
   removeStudentSkill,
   updateStudentAccount,
   updateStudentSkill,
@@ -98,6 +108,12 @@ const iconPaths = {
     </>
   ),
   moon: <path d="M20.5 14.2A8 8 0 0 1 9.8 3.5 9 9 0 1 0 20.5 14.2Z" />,
+  clipboard: (
+    <>
+      <rect x="5" y="4" width="14" height="17" rx="2" />
+      <path d="M9 4V2h6v2M9 10h6M9 14h6M9 18h4" />
+    </>
+  ),
 }
 
 function Icon({
@@ -124,6 +140,8 @@ const navItems = [
   { label: "Overview", icon: "grid" },
   { label: "My Profile", icon: "user" },
   { label: "My Courses", icon: "book" },
+  { label: "Tasks", icon: "clipboard" },
+  { label: "My Grades", icon: "file" },
   { label: "Settings", icon: "settings" },
 ]
 
@@ -482,7 +500,7 @@ function ProfilePage({ profile, onRefreshProfile }) {
   )
 }
 
-function CoursesPage({ courses }) {
+function CoursesPage({ courses, onViewProject }) {
   return (
     <div>
       <PageHeading
@@ -521,10 +539,10 @@ function CoursesPage({ courses }) {
                 <Icon name="file" className="h-4 w-4 text-[#6D5BD0]" />
               </div>
               <h3 className="mt-2 text-xs font-extrabold leading-5 text-[#31304c]">
-                Project details are not available yet.
+                Open the project brief and manage your team.
               </h3>
-              <button disabled title="Project details API is not available" className="mt-4 flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-lg bg-[#135D66] px-3 py-2.5 text-[10px] font-bold text-white opacity-60">
-                Project details unavailable
+              <button onClick={() => onViewProject(course)} className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-[#135D66] px-3 py-2.5 text-[10px] font-bold text-white transition hover:bg-[#003C43]">
+                View project details
                 <Icon name="arrow" className="h-3.5 w-3.5" />
               </button>
             </div>
@@ -538,167 +556,361 @@ function CoursesPage({ courses }) {
   )
 }
 
-function SettingsPage({ student, onSaveAccount }) {
-  const [email, setEmail] = useState(student.email)
-  const [currentPassword, setCurrentPassword] = useState("")
-  const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState("")
-  const [error, setError] = useState("")
-
-  const saveDetails = async (event) => {
-    event.preventDefault()
-    setMessage("")
-    if (!email.includes("@")) {
-      setError("Enter a valid email address.")
-      return
-    }
-    if (!currentPassword) {
-      setError("Enter your current password to save changes.")
-      return
-    }
-    setError("")
-    setSaving(true)
-    try {
-      await onSaveAccount({ email, currentPassword })
-      setCurrentPassword("")
-      setMessage("Your personal information has been updated.")
-    } catch (requestError) {
-      setError(requestError.message)
-    } finally {
-      setSaving(false)
-    }
-  }
+function CourseProjectPage({
+  course,
+  data,
+  loading,
+  error,
+  message,
+  teamName,
+  creatingTeam,
+  joiningTeam,
+  selectedProjectId,
+  onSelectProject,
+  onTeamNameChange,
+  onCreateTeam,
+  onJoinTeam,
+  onBack,
+}) {
+  const project = data?.project || null
+  const projects = Array.isArray(data?.projects) ? data.projects : project ? [project] : []
+  const teams = Array.isArray(data?.teams) ? data.teams : []
+  const alreadyInTeam = teams.some((team) => team.is_member)
 
   return (
     <div>
-      <PageHeading
-        eyebrow="Account preferences"
-        title="Settings"
-        description="Review your personal information and keep your account secure."
-      />
-      <div className="grid gap-6 xl:grid-cols-[1.25fr_0.75fr]">
-        <section className="theme-surface rounded-2xl bg-white p-6 shadow-[0_8px_30px_rgba(0,60,67,0.06)] sm:p-7">
-          <div>
-            <h2 className="text-lg font-extrabold text-[#003C43]">
-              Personal information
-            </h2>
-            <p className="mt-1 text-xs text-[#6d898b]">
-              Your name and student ID are managed by the university.
-            </p>
-          </div>
-          <form onSubmit={saveDetails} className="mt-6 space-y-5">
-            <div className="grid gap-5 sm:grid-cols-2">
-              <div>
-                <label className="text-[10px] font-bold text-[#587376]">
-                  Full name
-                </label>
-                <input
-                  value={student.full_name}
-                  disabled
-                  className="mt-2 w-full cursor-not-allowed rounded-xl bg-[#eef4f3] px-4 py-3 text-sm text-[#8aa1a3] outline-none"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-[#587376]">
-                  Student ID
-                </label>
-                <input
-                  value={student.student_id || "Not provided"}
-                  disabled
-                  className="mt-2 w-full cursor-not-allowed rounded-xl bg-[#eef4f3] px-4 py-3 text-sm text-[#8aa1a3] outline-none"
-                />
-              </div>
-            </div>
-            <div>
-              <label
-                htmlFor="email"
-                className="text-[10px] font-bold text-[#587376]"
-              >
-                Email address
-              </label>
-              <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(event) => {
-                  setEmail(event.target.value)
-                  setMessage("")
-                  setError("")
-                }}
-                className="theme-control mt-2 w-full rounded-xl border border-[#003C43]/10 bg-white px-4 py-3 text-sm text-[#003C43] outline-none transition focus:border-[#6D5BD0] focus:ring-4 focus:ring-[#6D5BD0]/10"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="current-password"
-                className="text-[10px] font-bold text-[#587376]"
-              >
-                Current password
-              </label>
-              <input
-                id="current-password"
-                type="password"
-                value={currentPassword}
-                onChange={(event) => {
-                  setCurrentPassword(event.target.value)
-                  setMessage("")
-                  setError("")
-                }}
-                autoComplete="current-password"
-                placeholder="Required to change account details"
-                className="theme-control mt-2 w-full rounded-xl border border-[#003C43]/10 bg-white px-4 py-3 text-sm text-[#003C43] outline-none transition focus:border-[#6D5BD0] focus:ring-4 focus:ring-[#6D5BD0]/10"
-              />
-            </div>
-            {error && (
-              <div className="rounded-xl bg-[#fff0f0] px-4 py-3 text-[11px] font-semibold text-[#a94646]">
-                {error}
-              </div>
-            )}
-            {message && (
-              <div className="rounded-xl bg-[#E3FEF7] px-4 py-3 text-[11px] font-semibold text-[#135D66]">
-                {message}
-              </div>
-            )}
-            <button
-              type="submit"
-              disabled={saving}
-              className="rounded-xl bg-[#6D5BD0] px-5 py-3 text-xs font-bold text-white transition hover:bg-[#5c49c5] active:scale-[0.98] disabled:cursor-wait disabled:opacity-60"
-            >
-              {saving ? "Saving changes..." : "Save changes"}
-            </button>
-          </form>
-        </section>
+      <button
+        onClick={onBack}
+        className="mb-5 flex items-center gap-1 text-xs font-bold text-[#135D66] transition hover:text-[#003C43]"
+      >
+        <Icon name="chevron" className="h-3.5 w-3.5 rotate-180" />
+        Back to courses
+      </button>
 
-        <section className="theme-surface h-fit rounded-2xl bg-white p-6 shadow-[0_8px_30px_rgba(0,60,67,0.06)] sm:p-7">
-          <div className="grid h-11 w-11 place-items-center rounded-xl bg-[#f5f3ff] text-[#6D5BD0]">
-            <Icon name="settings" />
-          </div>
-          <h2 className="mt-5 text-lg font-extrabold text-[#003C43]">
-            Password & security
-          </h2>
-          <p className="mt-2 text-xs leading-5 text-[#6d898b]">
-            Password reset is not available because the backend does not yet
-            provide a reset-link workflow.
-          </p>
-          <button
-            disabled
-            title="Password reset is not available yet"
-            className="mt-6 w-full cursor-not-allowed rounded-xl border border-[#6D5BD0]/25 px-4 py-3 text-xs font-bold text-[#6D5BD0] opacity-60"
-          >
-            Reset password unavailable
-          </button>
-        </section>
-      </div>
+      <PageHeading
+        eyebrow={course?.name || "Course project"}
+        title={project?.title || "Project details"}
+        description="Review the project brief, create a team, or join one of the teams already working on it."
+      />
+
+      {loading ? (
+        <p className="text-xs text-[#6d898b]" role="status">Loading project details...</p>
+      ) : error ? (
+        <p className="rounded-xl bg-[#fff0f0] p-4 text-xs text-[#a94646]" role="alert">{error}</p>
+      ) : !project ? (
+        <p className="rounded-xl bg-white p-4 text-xs text-[#6d898b]">No project has been published for this course yet.</p>
+      ) : (
+        <>
+          {projects.length > 1 && (
+            <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.06)] sm:p-6">
+              <label className="text-xs font-semibold text-[#365c60]">Project
+                <select value={selectedProjectId || project.id} onChange={(event) => onSelectProject(event.target.value)} className="theme-control mt-1 w-full rounded-lg border p-2.5 text-sm sm:max-w-md">
+                  {projects.map((item) => <option key={item.id} value={item.id}>{item.title || `Project ${item.id}`}</option>)}
+                </select>
+              </label>
+            </section>
+          )}
+          <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.06)] sm:p-6">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6D5BD0]">
+                  Project brief
+                </div>
+                <p className="mt-3 max-w-3xl text-sm leading-6 text-[#587376]">
+                  {project.description || project.prd || "No description has been added for this project."}
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="theme-soft rounded-xl bg-[#f0f7f6] p-3">
+                  <div className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">
+                    <Icon name="clock" className="h-3 w-3" /> Deadline
+                  </div>
+                  <div className="mt-1 text-xs font-bold text-[#003C43]">
+                    {project.deadline ? new Date(project.deadline).toLocaleString() : "Not set"}
+                  </div>
+                </div>
+                <div className="theme-soft rounded-xl bg-[#f0f7f6] p-3">
+                  <div className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">
+                    <Icon name="users" className="h-3 w-3" /> Team size
+                  </div>
+                  <div className="mt-1 text-xs font-bold text-[#003C43]">
+                    {project.min_members_per_team}–{project.max_members_per_team} members
+                  </div>
+                </div>
+                <div className="theme-soft rounded-xl bg-[#f0f7f6] p-3">
+                  <div className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">
+                    <Icon name="file" className="h-3 w-3" /> Requirements
+                  </div>
+                  <div className="mt-1 text-xs font-bold text-[#003C43]">
+                    {project.requirements ? "Available" : "Not uploaded"}
+                  </div>
+                </div>
+              </div>
+            </div>
+            {project.requirements && (
+              <button
+                onClick={() => openStudentProjectRequirements(project.id)}
+                className="mt-5 flex w-fit items-center justify-center gap-2 rounded-lg bg-[#E3FEF7] px-4 py-3 text-xs font-bold text-[#135D66] transition hover:bg-[#77B0AA] hover:text-[#003C43]"
+              >
+                <Icon name="file" className="h-4 w-4" />
+                View requirements PDF
+              </button>
+            )}
+          </section>
+
+          <section className="theme-surface mt-6 rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.06)] sm:p-6">
+            <h2 className="text-lg font-bold text-[#003C43]">Create a team</h2>
+            {alreadyInTeam ? (
+              <p className="mt-3 rounded-xl bg-[#f0f7f6] p-4 text-xs text-[#135D66]">
+                You are already in a team for this project.
+              </p>
+            ) : (
+              <form onSubmit={onCreateTeam} className="mt-3 flex flex-col gap-3 sm:flex-row">
+                <input
+                  value={teamName}
+                  onChange={(event) => onTeamNameChange(event.target.value)}
+                  placeholder="Team name"
+                  aria-label="Team name"
+                  className="theme-control flex-1 rounded-xl border border-[#003C43]/10 bg-white px-4 py-2.5 text-sm text-[#003C43] outline-none transition focus:border-[#6D5BD0] focus:ring-4 focus:ring-[#6D5BD0]/10"
+                />
+                <button
+                  type="submit"
+                  disabled={creatingTeam}
+                  className="rounded-xl bg-[#6D5BD0] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#5c49c5] disabled:cursor-wait disabled:opacity-60"
+                >
+                  {creatingTeam ? "Creating..." : "Create team"}
+                </button>
+              </form>
+            )}
+          </section>
+
+          <section className="mt-6">
+            <div className="mb-4 flex items-end justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-bold text-[#003C43]">Teams in this course</h2>
+                <p className="mt-1 text-xs text-[#6d898b]">
+                  Every team created for this course project
+                </p>
+              </div>
+              <span className="rounded-full bg-[#E3FEF7] px-2.5 py-1 text-[10px] font-bold text-[#135D66]">
+                {teams.length} {teams.length === 1 ? "team" : "teams"}
+              </span>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+              {teams.map((team) => (
+                <article
+                  key={team.id}
+                  className={`theme-surface rounded-2xl border bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.06)] ${
+                    team.is_member ? "border-[#77B0AA]" : "border-[#003C43]/8"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="truncate text-sm font-extrabold text-[#003C43]">{team.name}</h3>
+                      <div className="mt-1 text-[10px] text-[#6d898b]">
+                        Led by {team.members.find((member) => member.id === team.leader_id)?.name || "TBA"}
+                      </div>
+                    </div>
+                    <span className="shrink-0 rounded-md bg-[#f5f3ff] px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-[#6D5BD0]">
+                      {team.status || "forming"}
+                    </span>
+                  </div>
+                  <div className="mt-4 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <div className="flex -space-x-1.5">
+                        {team.members.map((member) => (
+                          <span
+                            key={member.id}
+                            className="theme-invert grid h-6 w-6 place-items-center rounded-full border-2 border-white bg-[#77B0AA] text-[8px] font-extrabold text-[#003C43]"
+                          >
+                            {member.name.split(" ").map((part) => part[0]).join("").slice(0, 2)}
+                          </span>
+                        ))}
+                      </div>
+                      <span className="text-[10px] font-semibold text-[#718b8d]">
+                        {team.current_member_count}/{team.max_members}
+                      </span>
+                    </div>
+                    <button
+                      disabled={
+                        joiningTeam === team.id ||
+                        team.is_member ||
+                        alreadyInTeam ||
+                        team.available_spots <= 0
+                      }
+                      onClick={() => onJoinTeam(team.id)}
+                      className="rounded-lg bg-[#E3FEF7] px-3 py-2 text-[10px] font-bold text-[#135D66] transition hover:bg-[#77B0AA] hover:text-[#003C43] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {joiningTeam === team.id
+                        ? "Joining..."
+                        : team.is_member
+                          ? "Joined"
+                          : alreadyInTeam
+                            ? "Already in team"
+                            : team.available_spots <= 0
+                              ? "Full"
+                              : "Join team"}
+                    </button>
+                  </div>
+                  {team.is_member && (
+                    <div className="mt-3 text-[10px] font-bold text-[#135D66]">Your team</div>
+                  )}
+                </article>
+              ))}
+              {teams.length === 0 && (
+                <p className="text-xs text-[#6d898b]">
+                  No teams have been created for this course yet. Be the first to create one.
+                </p>
+              )}
+            </div>
+          </section>
+
+          {message && (
+            <p className="mt-6 rounded-xl bg-[#E3FEF7] p-4 text-xs text-[#135D66]" role="status">
+              {message}
+            </p>
+          )}
+        </>
+      )}
     </div>
   )
 }
 
-export default function StudentDashboard({ onLogout }) {
+function TasksPage({
+  tasks,
+  myTeams,
+  courses,
+  loading,
+  error,
+  notice,
+  courseFilter,
+  projectFilter,
+  statusFilter,
+  onCourseFilterChange,
+  onProjectFilterChange,
+  onStatusFilterChange,
+  onCreate,
+  onOpen,
+}) {
+  const projectOptions = Array.from(
+    new Map(
+      tasks
+        .filter((task) => task.project?.id)
+        .map((task) => [task.project.id, task.project]),
+    ).values(),
+  )
+  const visibleTasks = tasks.filter((task) => {
+    if (courseFilter !== "all" && String(task.course?.id) !== courseFilter) return false
+    if (projectFilter !== "all" && String(task.project?.id) !== projectFilter) return false
+    if (statusFilter !== "all" && task.status !== statusFilter) return false
+    return true
+  })
+
+  return (
+    <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.06)] sm:p-6">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-[#003C43]">Tasks</h1>
+          <p className="mt-1 text-xs text-[#6d898b]">
+            Manage your team tasks, assign work, and review instructor feedback.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onCreate}
+          disabled={myTeams.length === 0}
+          className="rounded-xl bg-[#135D66] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#003C43] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          Create task
+        </button>
+      </div>
+
+      {notice && <p className="theme-soft mt-4 rounded-xl p-3 text-xs text-[#135D66]" role="status">{notice}</p>}
+      {error && <p className="mt-4 rounded-xl bg-[#fff0f0] p-3 text-xs text-[#a94646]" role="alert">{error}</p>}
+      {myTeams.length === 0 && !loading && (
+        <p className="theme-soft mt-4 rounded-xl p-3 text-xs text-[#587376]">
+          Join or create a project team before creating tasks.
+        </p>
+      )}
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+        <label className="text-xs font-semibold text-[#365c60]">Course
+          <select value={courseFilter} onChange={(event) => { onCourseFilterChange(event.target.value); onProjectFilterChange("all") }} className="theme-control mt-1 w-full rounded-lg border p-2.5 text-sm">
+            <option value="all">All courses</option>
+            {(courses.length ? courses : Array.from(new Map(tasks.map((task) => [task.course?.id, task.course]).filter(([id]) => id)).values())).map((course) => (
+              <option key={course.id} value={course.id}>{course.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs font-semibold text-[#365c60]">Project
+          <select value={projectFilter} onChange={(event) => onProjectFilterChange(event.target.value)} className="theme-control mt-1 w-full rounded-lg border p-2.5 text-sm">
+            <option value="all">All projects</option>
+            {projectOptions
+              .filter((project) => courseFilter === "all" || String(project.course?.id) === courseFilter)
+              .map((project) => <option key={project.id} value={project.id}>{project.title || `Project ${project.id}`}</option>)}
+          </select>
+        </label>
+        <label className="text-xs font-semibold text-[#365c60]">Status
+          <select value={statusFilter} onChange={(event) => onStatusFilterChange(event.target.value)} className="theme-control mt-1 w-full rounded-lg border p-2.5 text-sm">
+            <option value="all">All statuses</option>
+            <option value="todo">To do</option>
+            <option value="in_progress">In progress</option>
+            <option value="review">Review</option>
+            <option value="done">Done</option>
+          </select>
+        </label>
+      </div>
+
+      {loading ? (
+        <p className="mt-5 text-sm text-[#6d898b]">Loading tasks...</p>
+      ) : visibleTasks.length ? (
+        <div className="mt-5 overflow-x-auto">
+          <table className="w-full min-w-[820px] text-left text-sm">
+            <thead>
+              <tr className="border-b border-[#003C43]/10 text-[10px] font-bold uppercase tracking-[0.12em] text-[#77B0AA]">
+                <th className="py-3 pr-4">Task</th>
+                <th className="py-3 pr-4">Course / project</th>
+                <th className="py-3 pr-4">Assignee</th>
+                <th className="py-3 pr-4">Status</th>
+                <th className="py-3 pr-4">Due</th>
+                <th className="py-3 pr-4">Activity</th>
+                <th className="py-3"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#003C43]/7">
+              {visibleTasks.map((task) => (
+                <tr key={task.id}>
+                  <td className="py-3 pr-4">
+                    <div className="font-bold text-[#003C43]">{task.title}</div>
+                    <div className="text-[10px] text-[#718b8d]">{task.team?.name || "No team"}</div>
+                  </td>
+                  <td className="py-3 pr-4 text-xs text-[#587376]">
+                    <div>{task.course?.name || "—"}</div>
+                    <div className="text-[10px]">{task.project?.title || "—"}</div>
+                  </td>
+                  <td className="py-3 pr-4 text-xs text-[#587376]">{task.assignee?.name || <span className="italic text-[#718b8d]">Unassigned</span>}</td>
+                  <td className="py-3 pr-4"><span className={`rounded-md px-2 py-1 text-[10px] font-bold uppercase ${statusTone(task.status)}`}>{task.status.replaceAll("_", " ")}</span></td>
+                  <td className="py-3 pr-4 text-xs text-[#587376]">{formatDate(task.due_date)}</td>
+                  <td className="py-3 pr-4 text-[10px] text-[#718b8d]">{task.comment_count || 0} comments · {task.attachment_count || 0} files</td>
+                  <td className="py-3"><button type="button" onClick={() => onOpen(task)} className="theme-control rounded-lg px-3 py-2 text-[10px] font-bold text-[#135D66]">Open</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="theme-soft mt-5 rounded-xl p-4 text-sm text-[#587376]">No tasks match the current filters.</p>
+      )}
+    </section>
+  )
+}
+
+export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
   const [active, setActive] = useState("Overview")
   const [mobileOpen, setMobileOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [darkMode, setDarkMode] = useState(false)
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem("team-platform-theme") === "dark")
   const [dashboard, setDashboard] = useState(null)
   const [profile, setProfile] = useState(null)
   const [coursePageData, setCoursePageData] = useState(null)
@@ -706,6 +918,24 @@ export default function StudentDashboard({ onLogout }) {
   const [pageError, setPageError] = useState("")
   const [joiningTeam, setJoiningTeam] = useState(null)
   const [joinMessage, setJoinMessage] = useState("")
+  const [selectedCourse, setSelectedCourse] = useState(null)
+  const [selectedProjectId, setSelectedProjectId] = useState(null)
+  const [projectData, setProjectData] = useState(null)
+  const [projectLoading, setProjectLoading] = useState(false)
+  const [projectError, setProjectError] = useState("")
+  const [teamName, setTeamName] = useState("")
+  const [creatingTeam, setCreatingTeam] = useState(false)
+  const [projectMessage, setProjectMessage] = useState("")
+  const [tasks, setTasks] = useState([])
+  const [myTeams, setMyTeams] = useState([])
+  const [loadingTasks, setLoadingTasks] = useState(false)
+  const [tasksError, setTasksError] = useState("")
+  const [taskNotice, setTaskNotice] = useState("")
+  const [taskCourseFilter, setTaskCourseFilter] = useState("all")
+  const [taskProjectFilter, setTaskProjectFilter] = useState("all")
+  const [taskStatusFilter, setTaskStatusFilter] = useState("all")
+  const [selectedTask, setSelectedTask] = useState(null)
+  const [creatingTask, setCreatingTask] = useState(false)
 
   useEffect(() => {
     let activeRequest = true
@@ -725,6 +955,11 @@ export default function StudentDashboard({ onLogout }) {
   }, [])
 
   useEffect(() => {
+    document.documentElement.classList.toggle("dark", darkMode)
+    localStorage.setItem("team-platform-theme", darkMode ? "dark" : "light")
+  }, [darkMode])
+
+  useEffect(() => {
     setPageError("")
     if (active !== "My Profile" && active !== "My Courses") return undefined
 
@@ -739,6 +974,28 @@ export default function StudentDashboard({ onLogout }) {
       })
       .catch((requestError) => {
         if (activeRequest) setPageError(requestError.message)
+      })
+    return () => {
+      activeRequest = false
+    }
+  }, [active])
+
+  useEffect(() => {
+    if (active !== "Tasks") return undefined
+    let activeRequest = true
+    setLoadingTasks(true)
+    setTasksError("")
+    Promise.all([listTasks(), getStudentTeams()])
+      .then(([taskItems, teamData]) => {
+        if (!activeRequest) return
+        setTasks(Array.isArray(taskItems) ? taskItems : [])
+        setMyTeams(Array.isArray(teamData.teams) ? teamData.teams : [])
+      })
+      .catch((requestError) => {
+        if (activeRequest) setTasksError(requestError.message)
+      })
+      .finally(() => {
+        if (activeRequest) setLoadingTasks(false)
       })
     return () => {
       activeRequest = false
@@ -768,11 +1025,110 @@ export default function StudentDashboard({ onLogout }) {
     }
   }
 
+  async function loadCourseProject(courseId, projectId = null) {
+    setProjectLoading(true)
+    setProjectError("")
+    try {
+      const data = await getStudentCourseTeams(courseId, projectId)
+      setProjectData(data)
+      if (projectId === null && data?.project?.id) setSelectedProjectId(data.project.id)
+    } catch (requestError) {
+      setProjectError(requestError.message)
+    } finally {
+      setProjectLoading(false)
+    }
+  }
+
+  function handleViewProject(course) {
+    setSelectedCourse(course)
+    setSelectedProjectId(null)
+    setProjectData(null)
+    setProjectError("")
+    setProjectMessage("")
+    setTeamName("")
+    setActive("Course Project")
+    loadCourseProject(course.id)
+  }
+
+  function handleSelectProject(projectId) {
+    setSelectedProjectId(Number(projectId))
+    setProjectMessage("")
+    setTeamName("")
+    loadCourseProject(selectedCourse.id, projectId)
+  }
+
+  function handleBackToCourses() {
+    setSelectedCourse(null)
+    setSelectedProjectId(null)
+    setProjectData(null)
+    setProjectError("")
+    setProjectMessage("")
+    setActive("My Courses")
+  }
+
+  async function handleCreateTeam(event) {
+    event.preventDefault()
+    if (!projectData?.project) return
+    setProjectError("")
+    setProjectMessage("")
+    setCreatingTeam(true)
+    try {
+      const result = await createStudentTeam({
+        projectId: projectData.project.id,
+        name: teamName.trim() || `Team ${Date.now()}`,
+      })
+      const createdTeam = result.team || result
+      setTeamName("")
+      setProjectMessage(`Team "${createdTeam.name}" created successfully.`)
+      await loadCourseProject(selectedCourse.id, selectedProjectId)
+      const updatedDashboard = await getStudentDashboard()
+      setDashboard(updatedDashboard)
+    } catch (requestError) {
+      setProjectError(requestError.message)
+    } finally {
+      setCreatingTeam(false)
+    }
+  }
+
+  async function handleJoinProjectTeam(teamId) {
+    setJoiningTeam(teamId)
+    setProjectError("")
+    setProjectMessage("")
+    try {
+      await joinStudentTeam(teamId)
+      setProjectMessage("You joined the team.")
+      await loadCourseProject(selectedCourse.id, selectedProjectId)
+      const updatedDashboard = await getStudentDashboard()
+      setDashboard(updatedDashboard)
+    } catch (requestError) {
+      setProjectError(requestError.message)
+    } finally {
+      setJoiningTeam(null)
+    }
+  }
+
   async function handleSaveAccount({ email, currentPassword }) {
     await updateStudentAccount({ email, currentPassword })
     const updatedProfile = { ...dashboard.student, email }
     setDashboard((current) => ({ ...current, student: updatedProfile }))
     setProfile(updatedProfile)
+  }
+
+  function handleTaskCreated(task) {
+    setTasks((items) => [task, ...items])
+    setCreatingTask(false)
+    setTaskNotice("Task created successfully.")
+  }
+
+  function handleTaskUpdated(updated) {
+    setTasks((items) => items.map((item) => (item.id === updated.id ? updated : item)))
+    setSelectedTask(updated)
+  }
+
+  function handleTaskDeleted(taskId) {
+    setTasks((items) => items.filter((item) => item.id !== taskId))
+    setSelectedTask(null)
+    setTaskNotice("Task deleted.")
   }
 
   if (loading) {
@@ -810,7 +1166,7 @@ export default function StudentDashboard({ onLogout }) {
     <div className={darkMode ? "dark" : ""}>
       <div className="theme-page min-h-screen bg-[#f5faf9] text-[#183f43] transition-colors duration-300">
         <Sidebar
-          active={active}
+          active={active === "Course Project" ? "My Courses" : active}
           onSelect={setActive}
           open={mobileOpen}
           onClose={() => setMobileOpen(false)}
@@ -837,7 +1193,7 @@ export default function StudentDashboard({ onLogout }) {
                 Student portal
               </div>
               <div className="truncate text-lg font-bold text-[#003C43]">
-                {active}
+                {active === "Course Project" ? "Project details" : active}
               </div>
             </div>
             <div className="ml-auto flex items-center gap-2 sm:gap-3">
@@ -888,10 +1244,6 @@ export default function StudentDashboard({ onLogout }) {
                     {student.major || student.domain || "Student"}
                   </div>
                 </div>
-                <Icon
-                  name="chevron"
-                  className="h-3.5 w-3.5 rotate-90 text-[#77B0AA]"
-                />
               </div>
             </div>
           </header>
@@ -922,8 +1274,8 @@ export default function StudentDashboard({ onLogout }) {
                         {deadlines.length} upcoming deadlines.
                       </p>
                     </div>
-                    <button onClick={() => setActive("My Courses")} className="theme-invert flex w-fit items-center gap-2 rounded-xl bg-[#E3FEF7] px-4 py-2.5 text-xs font-bold text-[#003C43] shadow-lg shadow-black/10 transition hover:bg-white">
-                      View my courses{" "}
+                    <button onClick={() => setActive("My Profile")} className="theme-invert flex w-fit items-center gap-2 rounded-xl bg-[#E3FEF7] px-4 py-2.5 text-xs font-bold text-[#003C43] shadow-lg shadow-black/10 transition hover:bg-white">
+                      View my profile{" "}
                       <Icon name="arrow" className="h-4 w-4" />
                     </button>
                   </div>
@@ -1088,9 +1440,76 @@ export default function StudentDashboard({ onLogout }) {
             ) : active === "My Profile" ? (
               profile ? <ProfilePage profile={profile} onRefreshProfile={async () => { const data = await getStudentProfile(); setProfile(data.student) }} /> : pageError ? <p className="text-xs text-[#a94646]" role="alert">{pageError}</p> : <p className="text-xs text-[#6d898b]" role="status">Loading your profile...</p>
             ) : active === "My Courses" ? (
-              coursePageData ? <CoursesPage courses={coursePageData} /> : pageError ? <p className="text-xs text-[#a94646]" role="alert">{pageError}</p> : <p className="text-xs text-[#6d898b]" role="status">Loading your courses...</p>
+              coursePageData ? <CoursesPage courses={coursePageData} onViewProject={handleViewProject} /> : pageError ? <p className="text-xs text-[#a94646]" role="alert">{pageError}</p> : <p className="text-xs text-[#6d898b]" role="status">Loading your courses...</p>
+            ) : active === "Course Project" ? (
+              selectedCourse ? (
+                <CourseProjectPage
+                  course={selectedCourse}
+                  data={projectData}
+                  loading={projectLoading}
+                  error={projectError}
+                  message={projectMessage}
+                  teamName={teamName}
+                  creatingTeam={creatingTeam}
+                  joiningTeam={joiningTeam}
+                  selectedProjectId={selectedProjectId}
+                  onSelectProject={handleSelectProject}
+                  onTeamNameChange={setTeamName}
+                  onCreateTeam={handleCreateTeam}
+                  onJoinTeam={handleJoinProjectTeam}
+                  onBack={handleBackToCourses}
+                />
+              ) : (
+                <p className="text-xs text-[#6d898b]" role="status">Select a course to view its project.</p>
+              )
+            ) : active === "Tasks" ? (
+              <TasksPage
+                tasks={tasks}
+                myTeams={myTeams}
+                courses={courses}
+                loading={loadingTasks}
+                error={tasksError}
+                notice={taskNotice}
+                courseFilter={taskCourseFilter}
+                projectFilter={taskProjectFilter}
+                statusFilter={taskStatusFilter}
+                onCourseFilterChange={setTaskCourseFilter}
+                onProjectFilterChange={setTaskProjectFilter}
+                onStatusFilterChange={setTaskStatusFilter}
+                onCreate={() => { setTaskNotice(""); setCreatingTask(true) }}
+                onOpen={(task) => { setTaskNotice(""); setSelectedTask(task) }}
+              />
+            ) : active === "My Grades" ? (
+              <MyGrades />
+            ) : active === "Settings" ? (
+              <SettingsPage
+                account={student}
+                accountType="student"
+                onSaveAccount={handleSaveAccount}
+                onRequestPasswordReset={onRequestPasswordReset}
+              />
             ) : (
-              <SettingsPage student={student} onSaveAccount={handleSaveAccount} />
+              <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 text-sm text-[#6d898b]">
+                This page is not available.
+              </section>
+            )}
+            {selectedTask && (
+              <TaskDetailsModal
+                task={selectedTask}
+                onClose={() => setSelectedTask(null)}
+                canManage
+                viewerRole="student"
+                currentUserId={student.id}
+                onTaskUpdated={handleTaskUpdated}
+                onTaskDeleted={handleTaskDeleted}
+              />
+            )}
+            {creatingTask && (
+              <StudentTaskCreateModal
+                teams={myTeams}
+                onClose={() => setCreatingTask(false)}
+                onCreated={handleTaskCreated}
+              />
             )}
           </div>
         </main>

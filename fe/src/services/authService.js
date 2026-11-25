@@ -31,8 +31,20 @@ export function logoutUser() {
   return apiRequest("/api/auth/logout", { method: "POST" });
 }
 
+export function updateAccountInfo({ email, currentPassword }) {
+  return apiRequest("/api/update_info", {
+    method: "PUT",
+    payload: { email, current_password: currentPassword },
+  });
+}
+
 export function getMicrosoftAuthStatus() {
   return apiRequest("/api/auth/microsoft/status", {
     errorMessage: "Unable to check Microsoft sign-in availability.",
   });
+}
+
+export function startMicrosoftLogin() {
+  const apiUrl = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "");
+  window.location.assign(`${apiUrl}/api/auth/microsoft/login`);
 }

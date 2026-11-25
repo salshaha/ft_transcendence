@@ -11,6 +11,9 @@ import requests
 from cryptography.fernet import Fernet, InvalidToken
 from flask import current_app
 
+from app.extensions import db
+
+
 class MicrosoftIdentityError(Exception):
     """Raised when Microsoft sign-in or token acquisition cannot complete."""
 
@@ -27,24 +30,29 @@ def is_configured():
             "MICROSOFT_CLIENT_ID",
             "MICROSOFT_CLIENT_SECRET",
             "MICROSOFT_TENANT_ID",
+            "MICROSOFT_AUTHORITY",
             "MICROSOFT_REDIRECT_URI",
         )
     )
 
 
 def _cache_cipher():
-    secret = current_app.config["SECRET_KEY"].encode("utf-8")
+    secret = str(current_app.config.get("SECRET_KEY", "")).encode("utf-8")
     key_material = hashlib.sha256(b"microsoft-msal-cache:" + secret).digest()
     return Fernet(base64.urlsafe_b64encode(key_material))
 
 
-def _token_cache_path(user_id):
-    cache_directory = (
+def _token_cache_directory():
+    directory = (
         Path(current_app.config["STORAGE_ROOT"]).expanduser().resolve()
         / "microsoft-token-cache"
     )
-    cache_directory.mkdir(parents=True, exist_ok=True)
-    return cache_directory / f"{int(user_id)}.cache"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _token_cache_path(user_id):
+    return _token_cache_directory() / f"{int(user_id)}.cache"
 
 
 def create_msal_application(token_cache=None):
@@ -61,19 +69,24 @@ def create_msal_application(token_cache=None):
 def start_auth_flow():
     application = create_msal_application()
     flow = application.initiate_auth_code_flow(
-        scopes=list(current_app.config["MICROSOFT_GRAPH_SCOPES"]),
+        scopes=list(current_app.config.get("MICROSOFT_SCOPES", ["User.Read"])),
         redirect_uri=current_app.config["MICROSOFT_REDIRECT_URI"],
     )
-    if "error" in flow:
+    if not isinstance(flow, dict) or "error" in flow:
         raise MicrosoftIdentityError(
-            flow.get("error_description") or flow["error"]
+            flow.get("error_description") if isinstance(flow, dict) else None
+            or "Unable to start Microsoft sign-in"
         )
+    if "auth_uri" not in flow:
+        raise MicrosoftIdentityError("Unable to start Microsoft sign-in")
     return flow
 
 
 def complete_auth_flow(flow, auth_response):
     if not flow:
-        raise MicrosoftIdentityError("Microsoft sign-in session expired. Please try again.")
+        raise MicrosoftIdentityError(
+            "Microsoft sign-in session expired. Please try again."
+        )
     application = create_msal_application()
     try:
         result = application.acquire_token_by_auth_code_flow(flow, auth_response)
@@ -82,20 +95,28 @@ def complete_auth_flow(flow, auth_response):
             "Microsoft sign-in could not be verified. Please try again."
         ) from exc
 
-    if "access_token" not in result or "id_token_claims" not in result:
-        message = result.get("error_description") or result.get("error")
+    if not isinstance(result, dict) or "access_token" not in result:
+        message = None
+        if isinstance(result, dict):
+            message = result.get("error_description") or result.get("error")
         raise MicrosoftIdentityError(message or "Microsoft sign-in failed")
+    if "id_token_claims" not in result:
+        raise MicrosoftIdentityError("Microsoft did not return an account identity")
     return result, application.token_cache
 
 
 def save_token_cache(user_id, token_cache):
-    encrypted = _cache_cipher().encrypt(token_cache.serialize().encode("utf-8"))
+    try:
+        encrypted = _cache_cipher().encrypt(
+            token_cache.serialize().encode("utf-8")
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        raise MicrosoftIdentityError("Unable to store Microsoft token cache") from exc
+
     destination = _token_cache_path(user_id)
     temporary_name = None
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="wb", dir=destination.parent, delete=False
-        ) as temporary_file:
+        with open(destination.with_suffix(".tmp"), "wb") as temporary_file:
             temporary_name = temporary_file.name
             temporary_file.write(encrypted)
             temporary_file.flush()
@@ -107,25 +128,42 @@ def save_token_cache(user_id, token_cache):
             os.unlink(temporary_name)
 
 
-def get_graph_access_token(user_id):
-    cache_path = _token_cache_path(user_id)
+
+def delete_token_cache(user_id):
     try:
-        encrypted_cache = cache_path.read_bytes()
+        _token_cache_path(user_id).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def decrypt_token_cache(user_id):
+    path = _token_cache_path(user_id)
+    try:
+        encrypted = path.read_bytes()
     except FileNotFoundError:
+        return None
+
+    try:
+        serialized = _cache_cipher().decrypt(encrypted).decode("utf-8")
+    except (InvalidToken, ValueError):
+        return None
+
+    cache = msal.SerializableTokenCache()
+    cache.deserialize(serialized)
+    return cache
+
+
+def get_graph_access_token(user_id):
+    token_cache = decrypt_token_cache(user_id)
+
+    if token_cache is None:
         raise MicrosoftIdentityError(
             "Sign in with Microsoft first to connect your course roster."
         )
-    try:
-        serialized = _cache_cipher().decrypt(encrypted_cache).decode("utf-8")
-    except (InvalidToken, ValueError) as exc:
-        raise MicrosoftIdentityError(
-            "Your Microsoft connection needs to be set up again. Please sign in with Microsoft."
-        ) from exc
 
-    token_cache = msal.SerializableTokenCache()
-    token_cache.deserialize(serialized)
     application = create_msal_application(token_cache)
     accounts = application.get_accounts()
+
     if not accounts:
         raise MicrosoftIdentityError(
             "Your Microsoft connection has expired. Please sign in with Microsoft again."
@@ -135,23 +173,41 @@ def get_graph_access_token(user_id):
         scopes=list(current_app.config["MICROSOFT_GRAPH_SCOPES"]),
         account=accounts[0],
     )
+
     if not result or "access_token" not in result:
         raise MicrosoftIdentityError(
             "Your Microsoft connection has expired. Please sign in with Microsoft again."
         )
+
     if token_cache.has_state_changed:
         save_token_cache(user_id, token_cache)
+
     return result["access_token"], accounts[0].get("realm")
 
 
 def fetch_signed_in_profile(access_token):
-    response = requests.get(
-        "https://graph.microsoft.com/v1.0/me?$select=id,displayName,givenName,surname,mail,userPrincipalName",
-        headers={"Authorization": f"Bearer {access_token}"},
-        timeout=15,
-    )
+    try:
+        response = requests.get(
+            "https://graph.microsoft.com/v1.0/me",
+            params={
+                "$select": "id,displayName,givenName,surname,mail,userPrincipalName"
+            },
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        raise MicrosoftIdentityError(
+            "Microsoft Graph could not be reached. Please try again."
+        ) from exc
+
     if not response.ok:
         raise MicrosoftIdentityError(
             "Microsoft Graph could not retrieve your profile. Please try signing in again."
         )
-    return response.json()
+
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise MicrosoftIdentityError(
+            "Microsoft Graph returned an invalid response."
+        ) from exc

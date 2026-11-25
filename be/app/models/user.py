@@ -9,13 +9,22 @@ class User(db.Model):
             name="users_role_check",
         ),
         db.CheckConstraint(
-            "microsoft_id IS NOT NULL OR password_hash IS NOT NULL",
+            "("
+            "microsoft_tenant_id IS NOT NULL AND microsoft_object_id IS NOT NULL"
+            ") OR microsoft_id IS NOT NULL OR password_hash IS NOT NULL",
             name="chk_users_authentication",
+        ),
+        db.UniqueConstraint(
+            "microsoft_tenant_id",
+            "microsoft_object_id",
+            name="uq_users_microsoft_identity",
         ),
     )
 
     id = db.Column(db.BigInteger, primary_key=True)
     microsoft_id = db.Column(db.String(255), unique=True)
+    microsoft_tenant_id = db.Column(db.String(255))
+    microsoft_object_id = db.Column(db.String(255))
     first_name = db.Column(db.String(100), nullable=False)
     last_name = db.Column(db.String(100), nullable=False)
     major = db.Column(db.String(150))

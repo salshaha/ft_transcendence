@@ -51,8 +51,8 @@ class Course(db.Model):
     enrollments = db.relationship(
         "CourseEnrollment", back_populates="course", passive_deletes=True
     )
-    project = db.relationship(
-        "Project", back_populates="course", uselist=False, passive_deletes=True
+    projects = db.relationship(
+        "Project", back_populates="course", passive_deletes=True
     )
 
 
@@ -66,6 +66,8 @@ class Project(db.Model):
             "max_members_per_team >= min_members_per_team",
             name="chk_project_max_members",
         ),
+        db.CheckConstraint("max_grade > 0", name="chk_projects_max_grade"),
+        db.Index("idx_projects_course", "course_id"),
     )
 
     id = db.Column(db.BigInteger, primary_key=True)
@@ -73,13 +75,18 @@ class Project(db.Model):
         db.BigInteger,
         db.ForeignKey("courses.id", ondelete="CASCADE"),
         nullable=False,
-        unique=True,
     )
     title = db.Column(db.String(255))
     description = db.Column(db.Text)
     deadline = db.Column(db.DateTime(timezone=True))
     min_members_per_team = db.Column(db.Integer, nullable=False)
     max_members_per_team = db.Column(db.Integer, nullable=False)
+    max_grade = db.Column(
+        db.Numeric(5, 2),
+        nullable=False,
+        server_default="100",
+        default=100,
+    )
     prd = db.Column(db.Text, nullable=False, server_default="")
     requirements_file_key = db.Column(db.Text)
     requirements_original_name = db.Column(db.String(255))
@@ -92,7 +99,7 @@ class Project(db.Model):
         server_default=db.func.current_timestamp(),
     )
 
-    course = db.relationship("Course", back_populates="project")
+    course = db.relationship("Course", back_populates="projects")
     teams = db.relationship("Team", back_populates="project", passive_deletes=True)
 
 

@@ -257,6 +257,18 @@ def get_dashboard(student):
     }
 
 
+def get_my_teams(student_id):
+    team_ids = [
+        team_id
+        for (team_id,) in db.session.query(Team.id)
+        .join(TeamMember, TeamMember.team_id == Team.id)
+        .filter(TeamMember.student_id == student_id)
+        .order_by(Team.id.asc())
+        .all()
+    ]
+    return [get_team_details(student_id, team_id) for team_id in team_ids]
+
+
 def _parse_datetime(value):
     if value is None or value == "":
         return None
@@ -274,13 +286,12 @@ def get_course_project(student_id, course_id):
     ).first()
     if enrolled is None:
         return None
-    course = Course.query.get(course_id)
-    if course is None or course.project is None:
+    course = Course.query.options(joinedload(Course.projects)).get(course_id)
+    if course is None or not course.projects:
         return None
-    project = course.project
-    return {
-        "course": {"id": course.id, "name": course.name},
-        "project": {
+
+    def serialize_project(project):
+        return {
             "id": project.id,
             "title": project.title,
             "description": project.description,
@@ -294,8 +305,82 @@ def get_course_project(student_id, course_id):
                 "content_type": project.requirements_content_type,
                 "size": project.requirements_size,
             } if project.requirements_file_key else None,
-        },
+        }
+
+    projects = [
+        serialize_project(project)
+        for project in sorted(course.projects, key=lambda item: item.id, reverse=True)
+    ]
+    return {
+        "course": {"id": course.id, "name": course.name},
+        "projects": projects,
+        "project": projects[0],
     }
+
+
+def get_course_teams(student_id, course_id, project_id=None):
+    data = get_course_project(student_id, course_id)
+    if data is None:
+        return None
+
+    selected_project = data["project"]
+    if project_id is not None:
+        try:
+            selected_project_id = int(project_id)
+        except (TypeError, ValueError):
+            return None
+        selected_project = next(
+            (
+                project
+                for project in data.get("projects", [])
+                if project["id"] == selected_project_id
+            ),
+            None,
+        )
+        if selected_project is None:
+            return None
+
+    data["project"] = selected_project
+    max_members = selected_project["max_members_per_team"]
+    teams = (
+        Team.query.options(
+            selectinload(Team.members).joinedload(TeamMember.student)
+        )
+        .filter(Team.project_id == selected_project["id"])
+        .order_by(Team.name.asc(), Team.id.asc())
+        .all()
+    )
+
+    data["teams"] = [
+        {
+            "id": team.id,
+            "name": team.name,
+            "status": team.status,
+            "leader_id": team.leader_id,
+            "max_members": max_members,
+            "current_member_count": len(team.members),
+            "available_spots": max(0, max_members - len(team.members)),
+            "is_member": any(
+                member.student_id == student_id for member in team.members
+            ),
+            "members": [
+                {
+                    "id": member.student.id,
+                    "student_id": member.student.student_id,
+                    "name": (
+                        f"{member.student.first_name} "
+                        f"{member.student.last_name}"
+                    ),
+                    "joined_at": (
+                        member.joined_at.isoformat() if member.joined_at else None
+                    ),
+                }
+                for member in team.members
+            ],
+        }
+        for team in teams
+    ]
+    return data
 
 
 def create_team(student_id, data):
@@ -330,6 +415,8 @@ def create_team(student_id, data):
         name = f"Team {student_id}"
     if len(name) > 150:
         raise ValueError("Team name must be 150 characters or fewer")
+    if Team.query.filter_by(project_id=project.id, name=name).first():
+        raise ValueError("A team with this name already exists in this project")
 
     team = Team(
         project_id=project.id,
@@ -585,9 +672,19 @@ def get_my_grades(student_id):
             "id": g.id,
             "project_id": g.project_id,
             "project_title": g.project.title if g.project else None,
+            "course_id": g.project.course_id if g.project else None,
+            "course_name": (
+                g.project.course.name if g.project and g.project.course else None
+            ),
             "grade": float(g.grade) if g.grade is not None else None,
+            "max_grade": (
+                float(g.project.max_grade)
+                if g.project and g.project.max_grade
+                else 100.0
+            ),
             "feedback": g.feedback,
             "published": g.published,
+            "published_at": g.published_at.isoformat() if g.published_at else None,
             "updated_at": g.updated_at.isoformat() if g.updated_at else None,
         }
         for g in grades

@@ -9,10 +9,12 @@ from app.services.student_service import (
     get_authenticated_student,
     get_available_teams,
     get_course_project,
+    get_course_teams,
     get_courses,
     get_dashboard,
     get_deadlines,
     get_my_grades,
+    get_my_teams,
     get_submission,
     get_team_details,
     join_team,
@@ -76,6 +78,20 @@ def course_project(course_id):
         return _database_error("Unable to retrieve project")
 
 
+@student_bp.route("/courses/<int:course_id>/teams", methods=["GET"])
+def course_teams(course_id):
+    student, response, status = _student_or_response()
+    if response:
+        return response, status
+    try:
+        data = get_course_teams(student.id, course_id, request.args.get("project_id"))
+        if data is None:
+            return jsonify({"message": "Course or project not found"}), 404
+        return jsonify(data), 200
+    except SQLAlchemyError:
+        return _database_error("Unable to retrieve course teams")
+
+
 @student_bp.route("/deadlines", methods=["GET"])
 def deadlines():
     student, response, status = _student_or_response()
@@ -85,6 +101,17 @@ def deadlines():
         return jsonify({"deadlines": get_deadlines(student.id)}), 200
     except SQLAlchemyError:
         return _database_error("Unable to retrieve deadlines")
+
+
+@student_bp.route("/teams", methods=["GET"])
+def my_teams():
+    student, response, status = _student_or_response()
+    if response:
+        return response, status
+    try:
+        return jsonify({"teams": get_my_teams(student.id)}), 200
+    except SQLAlchemyError:
+        return _database_error("Unable to retrieve your teams")
 
 
 @student_bp.route("/teams/available", methods=["GET"])

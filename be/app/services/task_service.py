@@ -10,6 +10,7 @@ from app.models.student_dashboard import (
     Team,
     TeamMember,
 )
+from app.models.task_collaboration import TaskAttachment, TaskComment
 from app.models.user import User
 
 TASK_STATUSES = frozenset({"todo", "in_progress", "review", "done"})
@@ -77,6 +78,12 @@ def can_manage_team_tasks(user, team):
     return False
 
 
+def can_give_task_feedback(user, task):
+    return user.role == "instructor" and _teaches_course(
+        user, task.team.project.course_id
+    )
+
+
 def _scope_tasks(query, user):
     if user.role == "admin":
         return query
@@ -98,7 +105,35 @@ def _iso(value):
     return value.isoformat() if value is not None else None
 
 
+def _person(user):
+    if user is None:
+        return None
+    return {
+        "id": user.id,
+        "name": f"{user.first_name} {user.last_name}",
+        "email": user.email,
+    }
+
+
 def serialize_task(task):
+    team = task.team
+    project = team.project if team else None
+    course = project.course if project else None
+    members = []
+    if team is not None:
+        members = [
+            {
+                "id": member.student_id,
+                "student_id": member.student.student_id
+                if member.student else None,
+                "name": (
+                    f"{member.student.first_name} {member.student.last_name}"
+                    if member.student else f"Student {member.student_id}"
+                ),
+            }
+            for member in team.members
+        ]
+
     return {
         "id": task.id,
         "team_id": task.team_id,
@@ -110,6 +145,23 @@ def serialize_task(task):
         "due_date": _iso(task.due_date),
         "status": task.status,
         "description": task.description,
+        "assignee": _person(task.assignee),
+        "creator": _person(task.creator),
+        "team": {
+            "id": team.id,
+            "name": team.name,
+            "members": members,
+        } if team else None,
+        "project": {
+            "id": project.id,
+            "title": project.title,
+        } if project else None,
+        "course": {
+            "id": course.id,
+            "name": course.name,
+        } if course else None,
+        "comment_count": TaskComment.query.filter_by(task_id=task.id).count(),
+        "attachment_count": TaskAttachment.query.filter_by(task_id=task.id).count(),
     }
 
 
@@ -203,11 +255,6 @@ def list_tasks(user, team_id=None):
 
 
 def create_task(user, data):
-    if user.role == "instructor":
-        raise TaskError(
-            "Instructors have read-only access to team tasks", 403
-        )
-
     team_id = _parse_int(data.get("team_id"), "team_id")
     if team_id is None:
         raise TaskError("team_id is required")

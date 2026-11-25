@@ -16,6 +16,37 @@ export function joinStudentTeam(teamId) {
   return apiRequest(`/api/student/teams/${teamId}/join`, { method: "POST" });
 }
 
+export function getStudentCourseProject(courseId) {
+  return apiRequest(`/api/student/courses/${courseId}/project`);
+}
+
+export function getStudentCourseTeams(courseId, projectId = null) {
+  const query = projectId === null ? "" : `?project_id=${projectId}`;
+  return apiRequest(`/api/student/courses/${courseId}/teams${query}`);
+}
+
+export function getStudentTeams() {
+  return apiRequest("/api/student/teams");
+}
+
+export function getStudentGrades() {
+  return apiRequest("/api/student/grades", {
+    errorMessage: "Unable to load your grades.",
+  });
+}
+
+export function createStudentTeam({ projectId, name }) {
+  return apiRequest("/api/student/teams", {
+    method: "POST",
+    payload: { project_id: projectId, name },
+  });
+}
+
+export function openStudentProjectRequirements(projectId) {
+  const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "");
+  window.open(`${API_URL}/api/student/projects/${projectId}/requirements`, "_blank", "noopener,noreferrer");
+}
+
 export function updateStudentAccount({ email, currentPassword }) {
   return apiRequest("/api/update_info", {
     method: "PUT",

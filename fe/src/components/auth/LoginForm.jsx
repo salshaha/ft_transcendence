@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../../hooks/useAuth";
-import { getMicrosoftAuthStatus } from "../../services/authService";
+import { getMicrosoftAuthStatus, startMicrosoftLogin } from "../../services/authService";
+import PasswordInput from "./PasswordInput";
 
 const initialValues = { first_name: "", last_name: "", student_id: "", email: "", password: "" };
 
-export default function LoginForm({ onAuthenticated }) {
+export default function LoginForm({ onAuthenticated, onForgotPassword, notice = "" }) {
   const [mode, setMode] = useState("login");
   const [values, setValues] = useState(initialValues);
   const [success, setSuccess] = useState("");
@@ -71,7 +72,16 @@ export default function LoginForm({ onAuthenticated }) {
         {!isLogin && <label>First name<input name="first_name" value={values.first_name} onChange={handleChange} placeholder="Your first name" required /></label>}
         {!isLogin && <label>Last name<input name="last_name" value={values.last_name} onChange={handleChange} placeholder="Your last name" required /></label>}
         <label>Email address<input name="email" type="email" value={values.email} onChange={handleChange} placeholder="you@example.com" required /></label>
-        <label>Password<input name="password" type="password" value={values.password} onChange={handleChange} placeholder="At least 8 characters" minLength="8" required /></label>
+        <PasswordInput
+          key={isLogin ? "login-password" : "register-password"}
+          name="password"
+          value={values.password}
+          onChange={handleChange}
+          placeholder="At least 8 characters"
+          minLength={8}
+          autoComplete={isLogin ? "current-password" : "new-password"}
+          required
+        />
         {!isLogin && (
           <label>Student ID<input name="student_id" value={values.student_id} onChange={handleChange} placeholder="Your student ID" required /></label>
         )}
@@ -80,10 +90,19 @@ export default function LoginForm({ onAuthenticated }) {
             Student accounts can sign up here. Instructor accounts are created by an administrator.
           </p>
         )}
+        {isLogin && (
+          <button className="auth-link justify-self-end" type="button" onClick={onForgotPassword}>
+            Forgot password?
+          </button>
+        )}
         {(error || microsoftError) && <p className="form-message error" role="alert">{error || microsoftError}</p>}
-        {success && <p className="form-message success" role="status">{success}</p>}
+        {(success || notice) && <p className="form-message success" role="status">{success || notice}</p>}
         <button className="submit-button" type="submit" disabled={isLoading}>{isLoading ? "Please wait..." : isLogin ? "Continue to Team-Platform  →" : "Create my account  →"}</button>
-        {isLogin && microsoftConfigured && <button className="microsoft-button" type="button" onClick={startMicrosoftLogin}>Sign in with Microsoft</button>}
+        {isLogin && microsoftConfigured && (
+          <button type="button" className="microsoft-button" onClick={startMicrosoftLogin}>
+            Sign in with Microsoft
+          </button>
+        )}
       </form>
       <p className="legal">By continuing, you agree to our <a href="#terms">Terms</a> and <a href="#privacy">Privacy Policy</a>.</p>
     </div>
