@@ -45,6 +45,5 @@ export function getMicrosoftAuthStatus() {
 }
 
 export function startMicrosoftLogin() {
-  const apiUrl = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "");
-  window.location.assign(`${apiUrl}/api/auth/microsoft/login`);
+  window.location.assign("/api/auth/microsoft/login");
 }

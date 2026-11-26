@@ -76,6 +76,8 @@ export function createStudentTeam({ projectId, name }) {
   });
 }
 
+export function openStudentProjectRequirements(projectId) {
+  window.open(`/api/student/projects/${projectId}/requirements`, "_blank", "noopener,noreferrer");
 export function studentProjectRequirementsUrl(projectId, { download = false } = {}) {
   const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "");
   const params = download ? "?download=1" : "";
