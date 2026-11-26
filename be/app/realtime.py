@@ -278,7 +278,7 @@ def _send_queued_updates(websocket, outgoing, stop_sender):
             return
 
 
-def init_realtime(app):
+def init_admin_analytics(app):
     app.config.setdefault(
         "SOCK_SERVER_OPTIONS",
         {"ping_interval": 25, "max_message_size": 1024},

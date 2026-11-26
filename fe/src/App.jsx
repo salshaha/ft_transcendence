@@ -4,8 +4,10 @@ import ResetPassword from "./pages/ResetPassword";
 import InstructorDashboard from "./pages/InstructorDashboard";
 import StudentDashboard from "./pages/StudentDashboard";
 import AdminDashboard from "./pages/AdminDashboard";
+import AdminSettings from "./pages/AdminSettings";
 import { getSession, logoutUser } from "./services/authService";
 import { useEffect, useState } from "react";
+import { useAuthView } from "./hooks/useAuthView";
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -85,7 +87,6 @@ export default function App() {
     );
   }
 
-  if (user?.role === "admin" || user?.role === "instructor" || user?.role === "student") {
   if (view === "forgot-password" || view === "reset-password") {
     return (
       <>
@@ -108,10 +109,6 @@ export default function App() {
             onSuccess={handlePasswordResetSuccess}
           />
         )}
-        {user.role === "admin" ? (
-          <AdminDashboard onLogout={handleLogout} />
-        ) : user.role === "instructor" ? (
-          <InstructorDashboard onLogout={handleLogout} />
       </>
     );
   }

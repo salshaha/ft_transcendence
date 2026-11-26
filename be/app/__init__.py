@@ -26,7 +26,7 @@ def create_app():
     from app import models  # noqa: F401
     from app.auth.routes import auth_bp, microsoft_bp
     from app.cli import register_cli
-    from app.realtime import init_realtime
+    from app.realtime import init_admin_analytics, init_realtime
     from app.routes.admin import admin_bp
     from app.routes.instructor import instructor_bp
     from app.routes.presence import presence_bp
@@ -46,9 +46,9 @@ def create_app():
     init_csrf(app)
     init_request_validation(app)
     init_realtime(app)
+    init_admin_analytics(app)
     init_activity_tracking(app)
     init_storage(app)
-    init_realtime(app)
     register_cli(app)
 
     app.register_blueprint(admin_bp, url_prefix="/api/admin")

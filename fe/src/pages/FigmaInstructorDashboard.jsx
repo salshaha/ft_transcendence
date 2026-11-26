@@ -439,7 +439,7 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
   const [syncingMicrosoftCourses, setSyncingMicrosoftCourses] = useState(false)
   const [microsoftSyncMessage, setMicrosoftSyncMessage] = useState("")
   const [microsoftSyncError, setMicrosoftSyncError] = useState("")
-  const { instructor, courses, deadlines, students, projects, submissions, resources } = data
+  const { instructor, courses, deadlines, students, projects, submissions, resources, progress } = data
   const [tasks, setTasks] = useState([])
   const [loadingTasks, setLoadingTasks] = useState(false)
   const [tasksError, setTasksError] = useState("")
@@ -463,7 +463,6 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
   const [kanbanProjectId, setKanbanProjectId] = useState("")
   const [kanbanTeams, setKanbanTeams] = useState([])
   const [loadingKanbanTeams, setLoadingKanbanTeams] = useState(false)
-  const { instructor, courses, deadlines, students, projects, submissions, resources, progress } = data
   const recentSubmissions = submissions?.items || []
   const normalizedSearch = searchTerm.trim().toLowerCase()
   const visibleStudents = students.filter((student) => {
