@@ -7,6 +7,7 @@ from app.extensions import db
 from app.models.student_dashboard import Project, Task, Team
 from app.models.task_collaboration import TaskAttachment, TaskComment
 from app.services.storage import StorageError
+from app.realtime import emit_comment_event
 from app.services.task_service import can_give_task_feedback, can_read_team
 
 
@@ -170,7 +171,9 @@ def create_comment(user, task_id, data):
     comment = TaskComment(task_id=task.id, author_id=user.id, body=body, kind=kind)
     db.session.add(comment)
     db.session.commit()
-    return serialize_comment(comment)
+    result = serialize_comment(comment)
+    emit_comment_event("created", result, task.team_id)
+    return result
 
 
 def update_comment(user, comment_id, data):
@@ -178,14 +181,19 @@ def update_comment(user, comment_id, data):
     _ensure_can_modify_entry(user, comment)
     comment.body = _validate_body(data.get("body", data.get("comment")))
     db.session.commit()
-    return serialize_comment(comment)
+    result = serialize_comment(comment)
+    emit_comment_event("updated", result, comment.task.team_id)
+    return result
 
 
 def delete_comment(user, comment_id):
     comment = _load_comment(comment_id)
     _ensure_can_modify_entry(user, comment)
+    result = serialize_comment(comment)
+    team_id = comment.task.team_id
     db.session.delete(comment)
     db.session.commit()
+    emit_comment_event("deleted", result, team_id)
     return {"message": "Comment deleted"}
 
 

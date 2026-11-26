@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react"
-import PasswordSecurityCard from "../components/auth/PasswordSecurityCard"
+import SettingsPage from "../components/SettingsPage"
 import FilePreviewModal from "../components/instructor/FilePreviewModal"
+import GradeManagement from "../components/instructor/GradeManagement"
+import InstructorTeamKanban from "../components/instructor/InstructorTeamKanban"
 import PdfPreview from "../components/instructor/PdfPreview"
 import ProgressCharts from "../components/instructor/ProgressCharts"
 import { formatDate, statusTone } from "../components/instructor/formatters"
@@ -17,12 +19,14 @@ import {
   getInstructorDashboard,
   getInstructorProjectTeams,
   getInstructorSubmissions,
+  getInstructorTeamKanban,
   instructorStudentAvatarUrl,
   instructorSubmissionFileUrl,
   saveFileBlob,
   updateInstructorProject,
   uploadInstructorProjectRequirements,
 } from "../services/instructorService"
+import { updateAccountInfo } from "../services/authService"
 import { listTasks } from "../services/taskService"
 
 const iconPaths = {
@@ -154,10 +158,7 @@ function Icon({
 const navItems = [
   { label: "Overview", icon: "grid" },
   { label: "Courses", icon: "book" },
-  { label: "Projects", icon: "file" },
-  { label: "Students", icon: "users" },
-  { label: "Tasks", icon: "clipboard" },
-  { label: "Progress Dashboard", icon: "chart" },
+  { label: "Grades", icon: "clipboard" },
   { label: "Submissions", icon: "file" },
   { label: "Settings", icon: "settings" },
 ]
@@ -435,6 +436,10 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
   const [loadingCourseStudents, setLoadingCourseStudents] = useState(false)
   const [courseStudentsError, setCourseStudentsError] = useState("")
   const [projectFileError, setProjectFileError] = useState("")
+  const [syncingMicrosoftCourses, setSyncingMicrosoftCourses] = useState(false)
+  const [microsoftSyncMessage, setMicrosoftSyncMessage] = useState("")
+  const [microsoftSyncError, setMicrosoftSyncError] = useState("")
+  const { instructor, courses, deadlines, students, projects, submissions, resources } = data
   const [tasks, setTasks] = useState([])
   const [loadingTasks, setLoadingTasks] = useState(false)
   const [tasksError, setTasksError] = useState("")
@@ -449,6 +454,15 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
   const [studentProfileId, setStudentProfileId] = useState(null)
   const [pdfProject, setPdfProject] = useState(null)
   const [previewFile, setPreviewFile] = useState(null)
+  const [selectedTeamBoard, setSelectedTeamBoard] = useState(null)
+  const [selectedTeamId, setSelectedTeamId] = useState(null)
+  const [selectedTeamProjectId, setSelectedTeamProjectId] = useState(null)
+  const [teamBoardLoading, setTeamBoardLoading] = useState(false)
+  const [teamBoardError, setTeamBoardError] = useState("")
+  const [kanbanCourseId, setKanbanCourseId] = useState("")
+  const [kanbanProjectId, setKanbanProjectId] = useState("")
+  const [kanbanTeams, setKanbanTeams] = useState([])
+  const [loadingKanbanTeams, setLoadingKanbanTeams] = useState(false)
   const { instructor, courses, deadlines, students, projects, submissions, resources, progress } = data
   const recentSubmissions = submissions?.items || []
   const normalizedSearch = searchTerm.trim().toLowerCase()
@@ -462,6 +476,7 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
       .includes(normalizedSearch)
   })
   const visibleProjects = projectCourseFilter === "all" ? projects : projects.filter((project) => String(project.course?.id) === projectCourseFilter)
+  const availableFormCourses = formCourses.filter((course) => !(course.project_ids?.length || course.projects?.length))
   const selectedCourseProjects = projectsForCourse(selectedCourse)
   const filteredTasks = tasks.filter((task) => {
     if (taskCourseFilter !== "all" && String(task.course?.id) !== taskCourseFilter) return false
@@ -532,6 +547,39 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
       activeRequest = false
     }
   }, [active, data])
+
+  useEffect(() => {
+    if (active !== "Team Kanban") return
+    const coursesWithProjects = courses.filter((course) => course.projects?.length)
+    if (coursesWithProjects.length === 0) return
+    if (!kanbanCourseId || !coursesWithProjects.some((course) => String(course.id) === kanbanCourseId)) {
+      setKanbanCourseId(String(coursesWithProjects[0].id))
+      return
+    }
+    const course = coursesWithProjects.find((item) => String(item.id) === kanbanCourseId)
+    if (!kanbanProjectId || !(course.projects || []).some((project) => String(project.id) === kanbanProjectId)) {
+      setKanbanProjectId(String(course.projects[0].id))
+    }
+  }, [active, courses, kanbanCourseId, kanbanProjectId])
+
+  useEffect(() => {
+    if (active !== "Team Kanban" || !kanbanProjectId) return undefined
+    let activeRequest = true
+    setLoadingKanbanTeams(true)
+    getInstructorProjectTeams(Number(kanbanProjectId))
+      .then((response) => {
+        if (activeRequest) setKanbanTeams(Array.isArray(response.teams) ? response.teams : [])
+      })
+      .catch((error) => {
+        if (activeRequest) setTeamBoardError(error.message)
+      })
+      .finally(() => {
+        if (activeRequest) setLoadingKanbanTeams(false)
+      })
+    return () => {
+      activeRequest = false
+    }
+  }, [active, kanbanProjectId])
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode)
@@ -629,6 +677,44 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
     }
   }
 
+  async function loadTeamBoard(teamId, projectId) {
+    if (!teamId) return null
+    setTeamBoardLoading(true)
+    setTeamBoardError("")
+    try {
+      const board = await getInstructorTeamKanban(teamId, projectId)
+      setSelectedTeamBoard(board)
+      setSelectedTeamId(teamId)
+      setSelectedTeamProjectId(projectId)
+      return board
+    } catch (error) {
+      setSelectedTeamBoard(null)
+      setTeamBoardError(describeRequestError(error, "Unable to load the team board."))
+      return null
+    } finally {
+      setTeamBoardLoading(false)
+    }
+  }
+
+  async function openTeamBoard(team, projectId) {
+    setActive("Team Kanban")
+    setNotice("")
+    await loadTeamBoard(team.id, projectId)
+  }
+
+  async function refreshTeamBoard() {
+    if (!selectedTeamId) return
+    await loadTeamBoard(selectedTeamId, selectedTeamProjectId)
+  }
+
+  async function handleSaveAccount({ email, currentPassword }) {
+    await updateAccountInfo({ email, currentPassword })
+    setData((current) => ({
+      ...current,
+      instructor: { ...current.instructor, email },
+    }))
+  }
+
   function previewSubmission(submission) {
     setPreviewFile({
       submission,
@@ -673,7 +759,7 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
     const { id, courseId, requirementsFile, requirementsName, ...fields } = projectEditor
     const minMembers = Number(fields.min_members_per_team)
     const maxMembers = Number(fields.max_members_per_team)
-    const selectedCourseInfo = formCourses.find((course) => String(course.id) === String(courseId))
+    const selectedCourseInfo = availableFormCourses.find((course) => String(course.id) === String(courseId))
 
     if (!fields.title.trim()) {
       setProjectError("Project title is required.")
@@ -688,8 +774,8 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
         setProjectError(formCoursesError)
         return
       }
-      if (formCourses.length === 0) {
-        setProjectError("No courses are assigned to your account.")
+      if (availableFormCourses.length === 0) {
+        setProjectError("Every course already has a project. Each course can have only one project.")
         return
       }
       if (!courseId || !selectedCourseInfo) {
@@ -776,6 +862,24 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
       setProjectError(error.message)
     } finally {
       setSavingProject(false)
+    }
+  }
+
+  async function syncMicrosoftClasses() {
+    setSyncingMicrosoftCourses(true)
+    setMicrosoftSyncMessage("")
+    setMicrosoftSyncError("")
+    try {
+      const result = await syncMicrosoftCourses()
+      const refreshed = await getInstructorDashboard()
+      setData(refreshed)
+      setMicrosoftSyncMessage(
+        `Synced ${result.classes_added} new classes, updated ${result.classes_updated}, and enrolled ${result.enrollments_added} students.`,
+      )
+    } catch (error) {
+      setMicrosoftSyncError(error.message)
+    } finally {
+      setSyncingMicrosoftCourses(false)
     }
   }
 
@@ -904,8 +1008,8 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <button onClick={() => openProjectEditor(null)} className="theme-invert flex w-fit items-center gap-2 rounded-xl bg-[#E3FEF7] px-4 py-2.5 text-xs font-bold text-[#003C43] transition hover:bg-white">
-                    Add Project <Icon name="arrow" className="h-4 w-4" />
+                  <button onClick={() => setActive("Courses")} className="theme-invert flex w-fit items-center gap-2 rounded-xl bg-[#E3FEF7] px-4 py-2.5 text-xs font-bold text-[#003C43] transition hover:bg-white">
+                    View courses <Icon name="arrow" className="h-4 w-4" />
                   </button>
                 </div>
               </div>
@@ -919,14 +1023,26 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
                       Progress overview
                     </h2>
                     <p className="mt-1 text-xs text-[#6d898b]">
-                      Live completion, submission, and risk metrics from your courses
+                      At-a-glance course and task progress
                     </p>
                   </div>
                   <button onClick={() => setActive("Progress Dashboard")} className="flex items-center gap-1 text-xs font-bold text-[#135D66] transition hover:text-[#003C43]">
                     View details <Icon name="chevron" className="h-3.5 w-3.5" />
                   </button>
                 </div>
-                <ProgressCharts progress={progress} />
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  {[
+                    { label: "Active courses", value: progress.overall?.course_count ?? courses.length },
+                    { label: "Total students", value: progress.overall?.student_count ?? students.length },
+                    { label: "Team progress", value: `${progress.overall?.team_count ?? 0} teams` },
+                    { label: "Task progress", value: `${progress.overall?.completion_percent ?? 0}% complete` },
+                  ].map((stat) => (
+                    <article key={stat.label} className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5">
+                      <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#77B0AA]">{stat.label}</div>
+                      <div className="mt-2 text-2xl font-extrabold text-[#003C43]">{stat.value}</div>
+                    </article>
+                  ))}
+                </div>
               </section>
             )}
 
@@ -1093,8 +1209,12 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
                 <div className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
                   <div className="flex flex-wrap items-start justify-between gap-4">
                     <div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#77B0AA]">{selectedCourse.code || "Course"} · {selectedCourse.semester} {selectedCourse.academic_year}</p><h1 className="mt-1 text-2xl font-bold text-[#003C43]">{selectedCourse.name}</h1><p className="mt-2 text-xs text-[#6d898b]">{selectedCourse.student_count} enrolled students</p></div>
-                    <div className="flex flex-wrap gap-2">
-                      <button onClick={() => openProjectEditor(null, selectedCourse.id)} className="rounded-xl bg-[#135D66] px-4 py-2.5 text-xs font-bold text-white">{selectedCourseProjects.length ? "Create another project" : "Create project"}</button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {selectedCourseProjects.length === 0 ? (
+                        <button onClick={() => openProjectEditor(null, selectedCourse.id)} className="rounded-xl bg-[#135D66] px-4 py-2.5 text-xs font-bold text-white">Create project</button>
+                      ) : (
+                        <span className="theme-soft rounded-xl px-4 py-2.5 text-xs font-bold text-[#135D66]">Each course has one project</span>
+                      )}
                     </div>
                   </div>
                   <div className="mt-5">
@@ -1140,18 +1260,15 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
                 <div className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
                   <h2 className="text-lg font-bold text-[#003C43]">Project teams</h2>
                   <p className="mt-1 text-xs text-[#6d898b]">Teams and enrolled members across all projects in this course</p>
-                  {loadingCourseTeams ? <p className="mt-4 text-sm text-[#6d898b]">Loading teams…</p> : courseTeamsError ? <p className="mt-4 text-sm text-[#a94646]" role="alert">{courseTeamsError}</p> : courseTeams.length ? <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{courseTeams.map((team) => <article key={team.id} className="rounded-xl border border-[#003C43]/10 bg-[#f7fbfa] p-4"><div className="flex items-center justify-between gap-2"><h3 className="font-bold text-[#003C43]">{team.name}</h3><span className="rounded-full bg-[#E3FEF7] px-2 py-1 text-[10px] font-bold text-[#135D66]">{team.status.replaceAll("_", " ")}</span></div><p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-[#135D66]">{team.project_title || `Project ${team.project_id}`}</p><p className="mt-1 text-xs text-[#6d898b]">{team.member_count} {team.member_count === 1 ? "member" : "members"}</p><ul className="mt-3 space-y-1.5">{team.members.map((member) => <li key={member.student_id} className="text-sm text-[#365c60]">{member.name}{member.student_id === team.leader_id ? <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-[#77B0AA]">Leader</span> : null}</li>)}</ul></article>)}</div> : <p className="mt-4 rounded-xl bg-[#f0f7f6] p-4 text-sm text-[#587376]">{selectedCourseProjects.length ? "No teams have joined these projects yet." : "Teams will appear here after a project is created and students form teams."}</p>}
+                  {loadingCourseTeams ? <p className="mt-4 text-sm text-[#6d898b]">Loading teams…</p> : courseTeamsError ? <p className="mt-4 text-sm text-[#a94646]" role="alert">{courseTeamsError}</p> : courseTeams.length ? <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{courseTeams.map((team) => <article key={team.id} className="rounded-xl border border-[#003C43]/10 bg-[#f7fbfa] p-4"><div className="flex items-center justify-between gap-2"><h3 className="font-bold text-[#003C43]">{team.name}</h3><span className="rounded-full bg-[#E3FEF7] px-2 py-1 text-[10px] font-bold text-[#135D66]">{team.status.replaceAll("_", " ")}</span></div><p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-[#135D66]">{team.project_title || `Project ${team.project_id}`}</p><p className="mt-1 text-xs text-[#6d898b]">{team.member_count} {team.member_count === 1 ? "member" : "members"}</p><ul className="mt-3 space-y-1.5">{team.members.map((member) => <li key={member.student_id} className="text-sm text-[#365c60]">{member.name}{member.student_id === team.leader_id ? <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-[#77B0AA]">Leader</span> : null}</li>)}</ul><button type="button" onClick={() => openTeamBoard(team, team.project_id)} className="mt-4 rounded-lg bg-[#135D66] px-3 py-2 text-[11px] font-bold text-white">Open board</button></article>
+)}</div> : <p className="mt-4 rounded-xl bg-[#f0f7f6] p-4 text-sm text-[#587376]">{selectedCourseProjects.length ? "No teams have joined these projects yet." : "Teams will appear here after a project is created and students form teams."}</p>}
                 </div>
               </section>
             ) : active === "Courses" ? (
               <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
-                <div className="flex flex-wrap items-end justify-between gap-3">
-                  <div>
-                    <h1 className="text-xl font-bold text-[#003C43]">Courses</h1>
-                    <p className="mt-1 text-xs text-[#6d898b]">Open a course or view only its enrolled students.</p>
-                  </div>
-                  <button onClick={() => openProjectEditor(null)} className="rounded-xl bg-[#135D66] px-4 py-2.5 text-xs font-bold text-white">Add Project</button>
-                </div>
+                <div className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-xl font-bold text-[#003C43]">My courses</h1><button type="button" onClick={syncMicrosoftClasses} disabled={syncingMicrosoftCourses} className="rounded-xl bg-[#135D66] px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60">{syncingMicrosoftCourses ? "Syncing Microsoft classes…" : "Sync Microsoft classes"}</button></div>
+                {microsoftSyncError && <p className="mt-3 text-sm text-[#a94646]" role="alert">{microsoftSyncError}</p>}
+                {microsoftSyncMessage && <p className="mt-3 text-sm text-[#135D66]" role="status">{microsoftSyncMessage}</p>}
                 <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {courses.map((course) => (
                     <CourseCard
@@ -1163,53 +1280,6 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
                   ))}
                 </div>
                 {courses.length === 0 && <p className="mt-4 text-xs text-[#6d898b]">No courses are assigned to your account.</p>}
-              </section>
-            ) : active === "Projects" ? (
-              <section className="space-y-6">
-                <div className="theme-surface flex flex-wrap items-end justify-between gap-3 rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
-                  <div>
-                    <h1 className="text-xl font-bold text-[#003C43]">Projects</h1>
-                    <p className="mt-1 text-xs text-[#6d898b]">{projects.length} project{projects.length === 1 ? "" : "s"} across your courses</p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <label className="text-xs font-semibold text-[#365c60]">Filter by course
-                      <select value={projectCourseFilter} onChange={(event) => setProjectCourseFilter(event.target.value)} className="mt-1 w-full rounded-lg border border-[#003C43]/15 bg-white p-2 text-xs">
-                        <option value="all">All courses</option>
-                        {courses.map((course) => <option key={course.id} value={course.id}>{course.name}{course.projects?.length ? ` (${course.projects.length})` : ""}</option>)}
-                      </select>
-                    </label>
-                    <button onClick={() => openProjectEditor(null)} className="rounded-xl bg-[#135D66] px-4 py-2.5 text-xs font-bold text-white">Add Project</button>
-                  </div>
-                </div>
-                <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-                  {visibleProjects.map((project) => {
-                    const course = courses.find((item) => item.id === project.course?.id)
-                    return (
-                      <article key={project.id} className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)]">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#77B0AA]">{project.course?.name || "Course"}</p>
-                            <h2 className="mt-1 text-lg font-bold text-[#003C43]">{project.title || "Untitled project"}</h2>
-                          </div>
-                          <span className="rounded-full bg-[#E3FEF7] px-2.5 py-1 text-[10px] font-bold text-[#135D66]">{project.team_count} teams</span>
-                        </div>
-                        {project.description && <p className="mt-3 line-clamp-3 text-xs leading-5 text-[#587376]">{project.description}</p>}
-                        <div className="mt-4 space-y-1 text-[11px] text-[#587376]">
-                          <p>Team size: {project.min_members_per_team}–{project.max_members_per_team}</p>
-                          <p>Deadline: {formatDate(project.deadline)}</p>
-                          <p>Requirements: {project.requirements?.original_name || "Not uploaded"}</p>
-                        </div>
-                        <div className="mt-4 flex flex-wrap gap-2">
-                          <button type="button" onClick={() => openProjectEditor(project)} className="rounded-lg border border-[#135D66]/20 px-3 py-2 text-[11px] font-bold text-[#135D66]">Edit</button>
-                          {project.requirements && <button type="button" onClick={() => setPdfProject(project)} className="rounded-lg border border-[#135D66]/20 px-3 py-2 text-[11px] font-bold text-[#135D66]">Preview PDF</button>}
-                          {course && <button type="button" onClick={() => viewCourseStudents(course)} className="rounded-lg border border-[#135D66]/20 px-3 py-2 text-[11px] font-bold text-[#135D66]">View Students</button>}
-                          <button type="button" onClick={() => setActive("Tasks")} className="rounded-lg bg-[#E3FEF7] px-3 py-2 text-[11px] font-bold text-[#135D66]">Tasks</button>
-                        </div>
-                      </article>
-                    )
-                  })}
-                </div>
-                {visibleProjects.length === 0 && <p className="rounded-2xl border border-[#003C43]/8 bg-white p-5 text-sm text-[#6d898b]">{projectCourseFilter === "all" ? "No projects have been added yet. Use Add Project to create one." : "No projects have been added to this course yet."}</p>}
               </section>
             ) : active === "Students" ? (
               <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
@@ -1296,6 +1366,75 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
                 </div>
                 <ProgressCharts progress={progress} />
               </section>
+            ) : active === "Team Kanban" ? (
+              <section className="space-y-5">
+                <div className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
+                  <h1 className="text-xl font-bold text-[#003C43]">Team Kanban</h1>
+                  <p className="mt-1 text-xs text-[#6d898b]">
+                    Choose a project team to review its board and record individual grades.
+                  </p>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                    <label className="text-xs font-semibold text-[#365c60]">Course
+                      <select
+                        value={kanbanCourseId}
+                        onChange={(event) => {
+                          setKanbanCourseId(event.target.value)
+                          setKanbanProjectId("")
+                          setKanbanTeams([])
+                          setSelectedTeamBoard(null)
+                        }}
+                        className="theme-control mt-1 w-full rounded-lg border border-[#003C43]/15 p-2.5 text-sm"
+                      >
+                        <option value="">Select course</option>
+                        {courses.filter((course) => course.projects?.length).map((course) => (
+                          <option key={course.id} value={course.id}>{course.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-xs font-semibold text-[#365c60]">Project
+                      <select
+                        value={kanbanProjectId}
+                        onChange={(event) => {
+                          setKanbanProjectId(event.target.value)
+                          setKanbanTeams([])
+                          setSelectedTeamBoard(null)
+                        }}
+                        className="theme-control mt-1 w-full rounded-lg border border-[#003C43]/15 p-2.5 text-sm"
+                      >
+                        <option value="">Select project</option>
+                        {(courses.find((course) => String(course.id) === kanbanCourseId)?.projects || []).map((project) => (
+                          <option key={project.id} value={project.id}>{project.title}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-xs font-semibold text-[#365c60]">Team
+                      <select
+                        value={selectedTeamId || ""}
+                        onChange={(event) => loadTeamBoard(Number(event.target.value), Number(kanbanProjectId))}
+                        className="theme-control mt-1 w-full rounded-lg border border-[#003C43]/15 p-2.5 text-sm"
+                      >
+                        <option value="">Select team</option>
+                        {kanbanTeams.map((team) => (
+                          <option key={team.id} value={team.id}>{team.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  {loadingKanbanTeams && <p className="mt-3 text-xs text-[#6d898b]">Loading teams…</p>}
+                </div>
+                {teamBoardError && <p className="rounded-xl bg-[#fff0f0] p-4 text-xs text-[#a94646]" role="alert">{teamBoardError}</p>}
+                {teamBoardLoading && <p className="text-xs text-[#6d898b]" role="status">Loading team board…</p>}
+                {selectedTeamBoard && (
+                  <InstructorTeamKanban
+                    board={selectedTeamBoard}
+                    onOpenTask={setSelectedTask}
+                    onRefresh={refreshTeamBoard}
+                    refreshing={teamBoardLoading}
+                  />
+                )}
+              </section>
+            ) : active === "Grades" ? (
+              <GradeManagement courses={courses} projects={projects} />
             ) : active === "Submissions" ? (
               <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
                 <div className="flex flex-wrap items-end justify-between gap-3">
@@ -1310,16 +1449,12 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
                 </div>
               </section>
             ) : active === "Settings" ? (
-              <div className="grid gap-5 xl:grid-cols-[1.25fr_0.75fr]">
-                <section className="theme-surface h-fit rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
-                  <h1 className="text-xl font-bold text-[#003C43]">Settings</h1>
-                  <p className="mt-4 text-xs text-[#6d898b]">Signed in as {instructor.email}</p>
-                </section>
-                <PasswordSecurityCard
-                  email={instructor.email}
-                  onRequestPasswordReset={onRequestPasswordReset}
-                />
-              </div>
+              <SettingsPage
+                account={instructor}
+                accountType="instructor"
+                onSaveAccount={handleSaveAccount}
+                onRequestPasswordReset={onRequestPasswordReset}
+              />
             ) : (
               <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 text-sm text-[#6d898b]">
                 This page is not available.
@@ -1338,21 +1473,24 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
                         onChange={(event) => setProjectEditor({ ...projectEditor, courseId: event.target.value ? Number(event.target.value) : "" })}
                         className="mt-1 w-full rounded-lg border border-[#003C43]/15 bg-white p-2.5 text-sm"
                       >
-                        <option value="">{loadingFormCourses ? "Loading courses…" : formCourses.length ? "Select a course" : "No courses available"}</option>
-                        {formCourses.map((course) => (
-                          <option key={course.id} value={course.id}>
-                            {course.name}{course.code ? ` (${course.code})` : ""}
-                          </option>
-                        ))}
+                        <option value="">{loadingFormCourses ? "Loading courses…" : availableFormCourses.length ? "Select a course" : "No courses available"}</option>
+                        {formCourses.map((course) => {
+                          const hasProject = Boolean(course.project_ids?.length || course.projects?.length)
+                          return (
+                            <option key={course.id} value={course.id} disabled={hasProject}>
+                              {course.name}{course.code ? ` (${course.code})` : ""}{hasProject ? " — project already added" : ""}
+                            </option>
+                          )
+                        })}
                       </select>
                       <span className="mt-1 block font-normal text-[#718b8d]">
                         {loadingFormCourses
                           ? "Loading courses assigned to your account…"
                           : formCoursesError
                             ? formCoursesError
-                            : formCourses.length === 0
-                              ? "No courses are assigned to your account."
-                              : `${formCourses.length} course${formCourses.length === 1 ? "" : "s"} available. Courses can have multiple projects.`}
+                            : availableFormCourses.length === 0
+                              ? "Every course already has a project. Each course can have only one project."
+                              : `${availableFormCourses.length} course${availableFormCourses.length === 1 ? "" : "s"} available. Each course can have only one project.`}
                       </span>
                     </label>
                   )}
@@ -1361,7 +1499,7 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
                   <label className="block text-xs font-semibold text-[#365c60]">Project requirements file<input type="file" accept=".pdf,application/pdf" required={!projectEditor.requirementsName} onChange={(e) => setProjectEditor({ ...projectEditor, requirementsFile: e.target.files?.[0] || null })} className="mt-1 w-full rounded-lg border border-[#003C43]/15 bg-white p-2.5 text-sm" /><span className="mt-1 block font-normal text-[#718b8d]">Upload a PDF file.{projectEditor.requirementsFile ? ` Selected: ${projectEditor.requirementsFile.name}` : projectEditor.requirementsName ? ` Current file: ${projectEditor.requirementsName}` : " Required for this project."}</span></label>
                   <div className="grid gap-3 sm:grid-cols-3"><label className="text-xs font-semibold text-[#365c60]">Min team size<input type="number" min="1" required value={projectEditor.min_members_per_team} onChange={(e) => setProjectEditor({ ...projectEditor, min_members_per_team: e.target.value })} className="mt-1 w-full rounded-lg border border-[#003C43]/15 p-2.5 text-sm" /></label><label className="text-xs font-semibold text-[#365c60]">Max team size<input type="number" min="1" required value={projectEditor.max_members_per_team} onChange={(e) => setProjectEditor({ ...projectEditor, max_members_per_team: e.target.value })} className="mt-1 w-full rounded-lg border border-[#003C43]/15 p-2.5 text-sm" /></label><label className="text-xs font-semibold text-[#365c60]">Deadline<input type="datetime-local" value={projectEditor.deadline} onChange={(e) => setProjectEditor({ ...projectEditor, deadline: e.target.value })} className="mt-1 w-full rounded-lg border border-[#003C43]/15 p-2.5 text-sm" /></label></div>
                   {projectError && <p className="text-sm text-[#a94646]" role="alert">{projectError}</p>}
-                  <div className="flex justify-between gap-2">{projectEditor.id && <button type="button" disabled={savingProject} onClick={deleteProject} className="mr-auto rounded-lg border border-[#a94646]/25 px-4 py-2 text-sm font-semibold text-[#a94646] disabled:opacity-60">Delete project</button>}<button type="button" onClick={() => setProjectEditor(null)} className="rounded-lg border border-[#003C43]/15 px-4 py-2 text-sm">Cancel</button><button disabled={savingProject || (!projectEditor.id && (loadingFormCourses || Boolean(formCoursesError) || formCourses.length === 0))} className="rounded-lg bg-[#135D66] px-4 py-2 text-sm font-bold text-white disabled:opacity-60">{savingProject ? "Saving…" : "Save project"}</button></div>
+                  <div className="flex justify-between gap-2">{projectEditor.id && <button type="button" disabled={savingProject} onClick={deleteProject} className="mr-auto rounded-lg border border-[#a94646]/25 px-4 py-2 text-sm font-semibold text-[#a94646] disabled:opacity-60">Delete project</button>}<button type="button" onClick={() => setProjectEditor(null)} className="rounded-lg border border-[#003C43]/15 px-4 py-2 text-sm">Cancel</button><button disabled={savingProject || (!projectEditor.id && (loadingFormCourses || Boolean(formCoursesError) || availableFormCourses.length === 0))} className="rounded-lg bg-[#135D66] px-4 py-2 text-sm font-bold text-white disabled:opacity-60">{savingProject ? "Saving…" : "Save project"}</button></div>
                 </form>
               </div>
             )}

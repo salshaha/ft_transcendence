@@ -12,6 +12,7 @@ from app.models.student_dashboard import (
 )
 from app.models.task_collaboration import TaskAttachment, TaskComment
 from app.models.user import User
+from app.realtime import emit_task_event
 
 TASK_STATUSES = frozenset({"todo", "in_progress", "review", "done"})
 
@@ -283,7 +284,9 @@ def create_task(user, data):
     )
     db.session.add(task)
     db.session.commit()
-    return serialize_task(task)
+    result = serialize_task(task)
+    emit_task_event("created", result)
+    return result
 
 
 def _load_task(task_id):
@@ -324,11 +327,19 @@ def update_task(user, task_id, data):
     if not updates:
         raise TaskError("At least one editable task field is required")
 
+    previous = {field: getattr(task, field) for field in updates}
     for field, value in updates.items():
         setattr(task, field, value)
 
     db.session.commit()
-    return serialize_task(task)
+    result = serialize_task(task)
+    changes = {
+        field: result.get(field)
+        for field, value in updates.items()
+        if previous[field] != value
+    }
+    emit_task_event("updated", result, changes)
+    return result
 
 
 def delete_task(user, task_id):
@@ -336,6 +347,8 @@ def delete_task(user, task_id):
     if not can_manage_team_tasks(user, task.team):
         raise TaskError("You cannot delete tasks for this team", 403)
 
+    result = serialize_task(task)
     db.session.delete(task)
     db.session.commit()
+    emit_task_event("deleted", result)
     return {"message": "Task deleted successfully"}

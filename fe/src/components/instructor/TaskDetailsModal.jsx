@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react"
+import { useTeamRealtime } from "../../hooks/useTeamRealtime"
 import Modal from "./Modal"
 import { formatBytes, formatDate, statusTone } from "./formatters"
 import { saveFileBlob } from "../../services/instructorService"
+import { removeById, upsertById } from "../../services/realtimeReducers"
 import {
   createTaskComment,
   createTaskFeedback,
@@ -31,12 +33,26 @@ export default function TaskDetailsModal({ task, onClose, onTaskUpdated, onTaskD
 
   useEffect(() => {
     setCurrentTask(task)
+  }, [task])
+
+  useEffect(() => {
     setTitle(task.title)
     setDescription(task.description || "")
     setStatus(task.status)
     setAssigneeId(String(task.assignee_id ?? ""))
     setDueDate(task.due_date ? task.due_date.slice(0, 16) : "")
-  }, [task])
+  }, [task.id])
+
+  useTeamRealtime(task?.team_id ? [task.team_id] : [], (event, payload) => {
+    if (payload?.task_id !== task.id) return
+    if (event === "comment_created" || event === "comment_updated") {
+      const comment = payload.comment
+      if (!comment) return
+      setComments((items) => upsertById(items, comment))
+    } else if (event === "comment_deleted") {
+      setComments((items) => removeById(items, payload.comment_id))
+    }
+  })
 
   useEffect(() => {
     let active = true

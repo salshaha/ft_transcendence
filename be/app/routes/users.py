@@ -1,11 +1,15 @@
-from flask import Blueprint, current_app, jsonify, request, session
+import mimetypes
+
+from flask import Blueprint, current_app, jsonify, request, send_file, session
 from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.utils import secure_filename
 
 from app.extensions import db
+from app.models.user import User
 from app.security.csrf import rotate_csrf_token
 from app.services.auth_service import get_authenticated_user
-from app.services.storage import StorageValidationError
+from app.services.student_directory_service import can_view_avatar
+from app.services.storage import StorageError, StorageValidationError
 from app.services.user_service import (
     UserAuthenticationError,
     UserConflictError,
@@ -84,6 +88,7 @@ def me():
 
     skills = [
         {
+            "id": ss.skill_id,
             "skill_id": ss.skill_id,
             "name": ss.skill.name,
             "category": ss.skill.category,
@@ -194,6 +199,51 @@ def delete_avatar():
     if key:
         current_app.extensions["storage"].delete(key)
     return jsonify({"message": "Avatar removed"}), 200
+
+
+def _avatar_response(user):
+    key = user.profile_picture
+    if not key:
+        return jsonify({"message": "Avatar not found"}), 404
+    try:
+        stream = current_app.extensions["storage"].open(key)
+    except (StorageError, OSError):
+        return jsonify({"message": "Unable to read avatar"}), 404
+    content_type = mimetypes.guess_type(key)[0] or "application/octet-stream"
+    return send_file(
+        stream,
+        mimetype=content_type,
+        as_attachment=False,
+        download_name="avatar",
+    )
+
+
+@users_bp.route("/me/avatar", methods=["GET"])
+def my_avatar():
+    user, error = get_authenticated_user()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+    return _avatar_response(user)
+
+
+@users_bp.route("/users/<int:user_id>/avatar", methods=["GET"])
+def user_avatar(user_id):
+    viewer, error = get_authenticated_user()
+    if error:
+        message, status = error
+        return jsonify({"message": message}), status
+
+    try:
+        if not can_view_avatar(viewer, user_id):
+            return jsonify({
+                "message": "You do not have permission to view this avatar"
+            }), 403
+        target = db.session.get(User, user_id)
+    except LookupError as exc:
+        return jsonify({"message": str(exc)}), 404
+
+    return _avatar_response(target)
 
 
 @users_bp.route("/skills", methods=["GET"])

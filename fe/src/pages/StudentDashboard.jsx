@@ -1,23 +1,42 @@
 import { useEffect, useState } from "react"
 import PasswordSecurityCard from "../components/auth/PasswordSecurityCard"
+import TaskDetailsModal from "../components/instructor/TaskDetailsModal"
+import Avatar from "../components/student/Avatar"
+import AvatarManager from "../components/student/AvatarManager"
+import SkillManager from "../components/student/SkillManager"
+import ConfirmDialog from "../components/student/ConfirmDialog"
+import FriendsPage from "../components/student/FriendsPage"
+import ProjectFeedbackPanel from "../components/student/ProjectFeedbackPanel"
+import ProjectSubmission from "../components/student/ProjectSubmission"
+import SettingsPage from "../components/SettingsPage"
 import { formatDate, statusTone } from "../components/instructor/formatters"
 import TaskDetailsModal from "../components/instructor/TaskDetailsModal"
+import MyGrades from "../components/student/MyGrades"
 import StudentTaskCreateModal from "../components/student/StudentTaskCreateModal"
-import { listTasks } from "../services/taskService"
+import TaskKanbanBoard from "../components/student/TaskKanbanBoard"
+import TeamChatPanel from "../components/student/TeamChatPanel"
+import TeamPreviewModal from "../components/student/TeamPreviewModal"
+import { formatLastSeen, resolvePresence } from "../components/student/studentFormatters"
+import { useRealtimeConnection, useTeamRealtime } from "../hooks/useTeamRealtime"
+import { usePresence } from "../hooks/usePresence"
+import StudentsPage from "./StudentsPage"
+import { removeById, upsertById } from "../services/realtimeReducers"
+import { listTasks, updateTask } from "../services/taskService"
 import {
-  addStudentSkill,
   createStudentTeam,
-  getAvailableSkills,
   getStudentCourseTeams,
   getStudentCourses,
   getStudentDashboard,
   getStudentProfile,
+  getStudentTeamPreview,
   getStudentTeams,
   joinStudentTeam,
+  leaveStudentTeam,
   openStudentProjectRequirements,
-  removeStudentSkill,
+  removeStudentTeamMember,
+  transferStudentTeamLeadership,
+  updateMyProfile,
   updateStudentAccount,
-  updateStudentSkill,
 } from "../services/studentService"
 
 const iconPaths = {
@@ -79,6 +98,19 @@ const iconPaths = {
       <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
     </>
   ),
+  chat: (
+    <>
+      <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z" />
+      <path d="M8 10h8M8 14h5" />
+    </>
+  ),
+  userPlus: (
+    <>
+      <path d="M15 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="8.5" cy="7" r="4" />
+      <path d="M19 8v6M22 11h-6" />
+    </>
+  ),
   file: (
     <>
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
@@ -138,8 +170,12 @@ function Icon({
 const navItems = [
   { label: "Overview", icon: "grid" },
   { label: "My Profile", icon: "user" },
+  { label: "Students", icon: "users" },
   { label: "My Courses", icon: "book" },
+  { label: "Team Chats", icon: "chat" },
+  { label: "Friends", icon: "userPlus" },
   { label: "Tasks", icon: "clipboard" },
+  { label: "My Grades", icon: "file" },
   { label: "Settings", icon: "settings" },
 ]
 
@@ -151,6 +187,7 @@ function Sidebar({
   collapsed,
   onToggleCollapsed,
   student,
+  presence,
   onLogout,
 }) {
   return (
@@ -225,8 +262,9 @@ function Sidebar({
               className={`group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition ${
                 collapsed ? "lg:justify-center" : ""
               } ${
-                active === item.label
-                  ? "bg-[#6D5BD0] text-white shadow-lg shadow-black/15"
+                 active === item.label
+                   ? "bg-[#135D66] text-white shadow-lg shadow-black/15"
+
                   : "text-white/70 hover:bg-white/8 hover:text-white"
               }`}
             >
@@ -246,9 +284,12 @@ function Sidebar({
               collapsed ? "lg:justify-center" : ""
             }`}
           >
-            <div className="theme-invert grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#77B0AA] text-xs font-bold text-[#003C43]">
-              {`${(student.first_name || "?")[0]}${(student.last_name || "?")[0]}`}
-            </div>
+            <Avatar
+              user={student}
+              className="h-10 w-10"
+              showPresence
+              presence={{ online: resolvePresence(presence, student).online }}
+            />
             <div className={`min-w-0 flex-1 ${collapsed ? "lg:hidden" : ""}`}>
               <div className="truncate text-sm font-semibold">{student.full_name}</div>
               <div className="truncate text-[11px] text-white/50">
@@ -306,7 +347,7 @@ function PageHeading({
 }) {
   return (
     <div className="mb-7">
-      <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6D5BD0]">
+      <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#135D66]">
         {eyebrow}
       </div>
       <h1 className="mt-2 text-2xl font-extrabold tracking-tight text-[#003C43] sm:text-[30px]">
@@ -319,180 +360,285 @@ function PageHeading({
   )
 }
 
-function ProfilePage({ profile, onRefreshProfile }) {
-  const [skillName, setSkillName] = useState("")
-  const [skillCategory, setSkillCategory] = useState("technical")
-  const [proficiency, setProficiency] = useState(3)
-  const [skillMessage, setSkillMessage] = useState("")
-  const [skillError, setSkillError] = useState("")
-  const [savingSkill, setSavingSkill] = useState(false)
-  const [removingSkillId, setRemovingSkillId] = useState(null)
+function ProfilePage({ profile, presence, onChanged, onPreviewTeam, onLeaveTeam }) {
+  const [editing, setEditing] = useState(false)
+  const [form, setForm] = useState({
+    major: profile.major || "",
+    domain: profile.domain || "",
+    joined_year: profile.joined_year || "",
+  })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState("")
+  const [message, setMessage] = useState("")
 
-  const skills = Array.isArray(profile.skills) ? profile.skills : []
+  useEffect(() => {
+    setForm({
+      major: profile.major || "",
+      domain: profile.domain || "",
+      joined_year: profile.joined_year || "",
+    })
+  }, [profile])
 
-  async function handleAddSkill(event) {
+  const selfPresence = resolvePresence(presence, profile)
+  const online = selfPresence.online
+  const team = profile.team || profile.current_project?.team || null
+
+  async function saveDetails(event) {
     event.preventDefault()
-    setSkillMessage("")
-    setSkillError("")
-    if (!skillName.trim()) {
-      setSkillError("Enter a skill name.")
-      return
-    }
-    setSavingSkill(true)
+    setSaving(true)
+    setError("")
+    setMessage("")
     try {
-      await addStudentSkill({
-        name: skillName.trim(),
-        category: skillCategory,
-        proficiencyLevel: proficiency,
+      await updateMyProfile({
+        major: form.major.trim(),
+        domain: form.domain.trim(),
+        joined_year: form.joined_year ? Number(form.joined_year) : "",
       })
-      setSkillName("")
-      setSkillMessage("Skill added.")
-      if (onRefreshProfile) await onRefreshProfile()
+      setMessage("Profile details updated.")
+      setEditing(false)
+      if (onChanged) await onChanged()
     } catch (requestError) {
-      setSkillError(requestError.message)
+      setError(requestError.message || "Unable to update profile.")
     } finally {
-      setSavingSkill(false)
+      setSaving(false)
     }
   }
 
-  async function handleRemoveSkill(skillId) {
-    setRemovingSkillId(skillId)
-    setSkillMessage("")
-    setSkillError("")
-    try {
-      await removeStudentSkill(skillId)
-      setSkillMessage("Skill removed.")
-      if (onRefreshProfile) await onRefreshProfile()
-    } catch (requestError) {
-      setSkillError(requestError.message)
-    } finally {
-      setRemovingSkillId(null)
-    }
-  }
   return (
     <div>
       <PageHeading
         eyebrow="Student profile"
         title="My Profile"
-        description="Keep your academic identity and project skills up to date."
+        description="Keep your academic identity, skills, and project presence up to date."
       />
 
       <div className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
         <section className="theme-surface rounded-2xl bg-white p-6 shadow-[0_8px_30px_rgba(0,60,67,0.06)]">
-          <div className="flex flex-col items-center text-center">
-            <div className="theme-invert grid h-24 w-24 place-items-center rounded-[24px] bg-[#77B0AA] text-2xl font-extrabold text-[#003C43]">
-              {`${profile.first_name[0]}${profile.last_name[0]}`}
-            </div>
-            <h2 className="mt-4 text-xl font-extrabold text-[#003C43]">
+          <AvatarManager user={profile} onChanged={onChanged} />
+
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-xl font-extrabold text-[#003C43]">
               {profile.full_name}
             </h2>
-            <p className="mt-1 text-xs font-semibold text-[#6d898b]">
-              {profile.major || "Major not provided"}
-            </p>
-            <span className="mt-3 rounded-full bg-[#E3FEF7] px-3 py-1.5 text-[10px] font-bold text-[#135D66]">
-              {profile.gpa === null || profile.gpa === undefined
-                ? "GPA not available"
-                : `GPA ${Number(profile.gpa).toFixed(2)}`}
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${
+                online
+                  ? "bg-[#dff8f3] text-[#135D66]"
+                  : "bg-[#eef4f3] text-[#718b8d]"
+              }`}
+            >
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  online ? "bg-[#22c55e]" : "bg-[#9ca3af]"
+                }`}
+              />
+              {online ? "Online now" : formatLastSeen(selfPresence.last_seen)}
             </span>
           </div>
-          <div className="mt-6 space-y-4 border-t border-[#003C43]/8 pt-6">
-            <div>
-              <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">
-                Student ID
-              </div>
-              <div className="mt-1 text-xs font-bold text-[#18484d]">
-                {profile.student_id || "Not provided"}
-              </div>
-            </div>
-            <div>
-              <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">
-                Academic department
-              </div>
-              <div className="mt-1 text-xs font-bold text-[#18484d]">
-                {profile.domain || "Department not provided"}
-              </div>
-            </div>
-          </div>
-        </section>
 
-        <section className="theme-surface rounded-2xl bg-white p-6 shadow-[0_8px_30px_rgba(0,60,67,0.06)]">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-extrabold text-[#003C43]">Skills</h2>
-              <p className="mt-1 text-xs text-[#6d898b]">
-                Help classmates find you for the right projects.
-              </p>
+          <p className="mt-1 text-xs font-semibold text-[#6d898b]">
+            {profile.email}
+          </p>
+
+          {error ? (
+            <div className="mt-4 rounded-xl bg-[#fff0f0] px-3 py-2 text-[11px] font-semibold text-[#a94646]">
+              {error}
             </div>
-            <div />
-          </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {skills.length === 0 && (
-              <p className="text-xs text-[#6d898b]">No skills added yet.</p>
-            )}
-            {skills.map((skill) => (
-              <span
-                key={skill.skill_id}
-                className="inline-flex items-center gap-2 rounded-full bg-[#E3FEF7] px-3 py-1.5 text-[10px] font-bold text-[#135D66]"
-              >
-                {skill.name} · {skill.proficiency_level}/5
+          ) : null}
+          {message ? (
+            <div className="mt-4 rounded-xl bg-[#E3FEF7] px-3 py-2 text-[11px] font-semibold text-[#135D66]">
+              {message}
+            </div>
+          ) : null}
+
+          {editing ? (
+            <form onSubmit={saveDetails} className="mt-5 space-y-3 border-t border-[#003C43]/8 pt-5">
+              <label className="block text-[10px] font-bold uppercase tracking-wide text-[#77B0AA]">
+                Major
+                <input
+                  value={form.major}
+                  onChange={(event) => setForm((current) => ({ ...current, major: event.target.value }))}
+                  className="mt-1 w-full rounded-xl border border-[#003C43]/12 px-3 py-2 text-xs font-semibold text-[#18484d] outline-none focus:border-[#135D66]"
+                />
+              </label>
+              <label className="block text-[10px] font-bold uppercase tracking-wide text-[#77B0AA]">
+                Academic department
+                <input
+                  value={form.domain}
+                  onChange={(event) => setForm((current) => ({ ...current, domain: event.target.value }))}
+                  className="mt-1 w-full rounded-xl border border-[#003C43]/12 px-3 py-2 text-xs font-semibold text-[#18484d] outline-none focus:border-[#135D66]"
+                />
+              </label>
+              <label className="block text-[10px] font-bold uppercase tracking-wide text-[#77B0AA]">
+                Joined year
+                <input
+                  type="number"
+                  min="1990"
+                  max="2100"
+                  value={form.joined_year}
+                  onChange={(event) => setForm((current) => ({ ...current, joined_year: event.target.value }))}
+                  className="mt-1 w-full rounded-xl border border-[#003C43]/12 px-3 py-2 text-xs font-semibold text-[#18484d] outline-none focus:border-[#135D66]"
+                />
+              </label>
+              <div className="flex gap-2 pt-1">
                 <button
                   type="button"
-                  onClick={() => handleRemoveSkill(skill.skill_id)}
-                  disabled={removingSkillId === skill.skill_id}
-                  className="text-[#135D66] transition hover:text-[#003C43] disabled:opacity-60"
-                  aria-label={`Remove ${skill.name}`}
+                  onClick={() => setEditing(false)}
+                  className="rounded-xl border border-[#003C43]/15 px-3 py-2 text-[11px] font-bold text-[#003C43]"
                 >
-                  ×
+                  Cancel
                 </button>
-              </span>
-            ))}
-          </div>
-          <form onSubmit={handleAddSkill} className="mt-6 grid gap-3 sm:grid-cols-[1fr_120px_80px_auto]">
-            <input
-              value={skillName}
-              onChange={(event) => setSkillName(event.target.value)}
-              placeholder="Skill name"
-              className="theme-control rounded-xl border border-[#003C43]/10 bg-white px-4 py-2.5 text-sm text-[#003C43] outline-none transition focus:border-[#6D5BD0] focus:ring-4 focus:ring-[#6D5BD0]/10"
-            />
-            <select
-              value={skillCategory}
-              onChange={(event) => setSkillCategory(event.target.value)}
-              className="theme-control rounded-xl border border-[#003C43]/10 bg-white px-3 py-2.5 text-sm text-[#003C43] outline-none"
-            >
-              <option value="technical">Technical</option>
-              <option value="interpersonal">Interpersonal</option>
-              <option value="artistic">Artistic</option>
-              <option value="linguistic">Linguistic</option>
-              <option value="other">Other</option>
-            </select>
-            <select
-              value={proficiency}
-              onChange={(event) => setProficiency(Number(event.target.value))}
-              className="theme-control rounded-xl border border-[#003C43]/10 bg-white px-3 py-2.5 text-sm text-[#003C43] outline-none"
-            >
-              {[1, 2, 3, 4, 5].map((level) => (
-                <option key={level} value={level}>{level}</option>
-              ))}
-            </select>
-            <button
-              type="submit"
-              disabled={savingSkill}
-              className="rounded-xl bg-[#6D5BD0] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#5c49c5] disabled:cursor-wait disabled:opacity-60"
-            >
-              {savingSkill ? "Adding..." : "Add"}
-            </button>
-          </form>
-          {skillError && (
-            <div className="mt-3 rounded-xl bg-[#fff0f0] px-4 py-3 text-[11px] font-semibold text-[#a94646]">
-              {skillError}
-            </div>
-          )}
-          {skillMessage && (
-            <div className="mt-3 rounded-xl bg-[#E3FEF7] px-4 py-3 text-[11px] font-semibold text-[#135D66]">
-              {skillMessage}
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="rounded-xl bg-[#135D66] px-3 py-2 text-[11px] font-bold text-white disabled:opacity-60"
+                >
+                  {saving ? "Saving..." : "Save details"}
+                </button>
+              </div>
+            </form>
+          ) : (
+            <div className="mt-5 space-y-4 border-t border-[#003C43]/8 pt-5">
+              <div>
+                <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">
+                  Major
+                </div>
+                <div className="mt-1 text-xs font-bold text-[#18484d]">
+                  {profile.major || "Not provided"}
+                </div>
+              </div>
+              <div>
+                <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">
+                  Academic department
+                </div>
+                <div className="mt-1 text-xs font-bold text-[#18484d]">
+                  {profile.domain || "Not provided"}
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">Student ID</div>
+                  <div className="mt-1 text-[11px] font-bold text-[#18484d]">
+                    {profile.student_id || "—"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">Joined</div>
+                  <div className="mt-1 text-[11px] font-bold text-[#18484d]">
+                    {profile.joined_year || "—"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">GPA</div>
+                  <div className="mt-1 text-[11px] font-bold text-[#18484d]">
+                    {profile.gpa === null || profile.gpa === undefined
+                      ? "—"
+                      : Number(profile.gpa).toFixed(2)}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditing(true)}
+                className="rounded-xl border border-[#77B0AA]/50 px-3 py-2 text-[11px] font-bold text-[#135D66] transition hover:bg-[#E3FEF7]"
+              >
+                Edit details
+              </button>
             </div>
           )}
         </section>
+
+        <div className="space-y-6">
+          <section className="theme-surface rounded-2xl bg-white p-6 shadow-[0_8px_30px_rgba(0,60,67,0.06)]">
+            <h3 className="text-sm font-extrabold text-[#003C43]">Academic context</h3>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {(profile.courses || []).map((course) => (
+                <span
+                  key={course.id}
+                  className="rounded-xl bg-[#E3FEF7] px-2.5 py-1.5 text-[11px] font-bold text-[#135D66]"
+                >
+                  {course.name}
+                </span>
+              ))}
+              {(profile.courses || []).length === 0 ? (
+                <span className="text-xs text-[#718b8d]">No courses enrolled yet.</span>
+              ) : null}
+            </div>
+
+            {profile.current_project ? (
+              <div className="mt-4 rounded-2xl border border-[#003C43]/8 bg-[#f5faf9] p-4">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-[#77B0AA]">
+                  Current project
+                </div>
+                <div className="mt-1 text-sm font-extrabold text-[#003C43]">
+                  {profile.current_project.title}
+                </div>
+                {team ? (
+                  <div className="mt-3">
+                    <div className="text-[11px] font-bold text-[#135D66]">
+                      {team.name} · {team.status?.replaceAll("_", " ")}
+                    </div>
+                    <div className="mt-1 text-[11px] text-[#718b8d]">
+                      {team.current_member_count || team.members?.length || 0}/{team.max_members} members · {team.available_spots ?? 0} open · min {team.min_members || 1}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {(team.members || []).map((member) => (
+                        <span
+                          key={member.id}
+                          className="inline-flex items-center gap-1.5 rounded-full border border-[#77B0AA]/35 bg-white py-1 pl-1 pr-2 text-[10px] font-bold text-[#003C43]"
+                          title={formatLastSeen(member.last_seen)}
+                        >
+                          <Avatar
+                            user={member}
+                            className="h-6 w-6"
+                            rounded="rounded-full"
+                            showPresence
+                            presence={{
+                              online: resolvePresence(presence, member).online,
+                            }}
+                          />
+                          {member.name}
+                          {member.id === team.leader_id ? " · Leader" : ""}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {onPreviewTeam ? (
+                        <button
+                          type="button"
+                          onClick={() => onPreviewTeam(team.id)}
+                          className="rounded-lg bg-[#E3FEF7] px-3 py-1.5 text-[10px] font-bold text-[#135D66] transition hover:bg-[#77B0AA] hover:text-[#003C43]"
+                        >
+                          View team
+                        </button>
+                      ) : null}
+                      {onLeaveTeam ? (
+                        <button
+                          type="button"
+                          onClick={() => onLeaveTeam(team.id)}
+                          className="rounded-lg border border-[#dc2626]/30 px-3 py-1.5 text-[10px] font-bold text-[#dc2626] transition hover:bg-[#fee2e2]"
+                        >
+                          Leave team
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="mt-1 text-xs text-[#718b8d]">No team yet for this project.</p>
+                )}
+              </div>
+            ) : null}
+          </section>
+
+          <section className="theme-surface rounded-2xl bg-white p-6 shadow-[0_8px_30px_rgba(0,60,67,0.06)]">
+            <SkillManager
+              skills={profile.skills || []}
+              onChanged={async () => {
+                if (onChanged) await onChanged()
+              }}
+            />
+          </section>
+        </div>
       </div>
     </div>
   )
@@ -529,12 +675,12 @@ function CoursesPage({ courses, onViewProject }) {
               </div>
             </div>
 
-            <div className="mx-5 mb-5 rounded-xl bg-[#f5f3ff] p-4">
+            <div className="mx-5 mb-5 rounded-xl bg-[#E3FEF7] p-4">
               <div className="flex items-center justify-between">
-                <span className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-[#6D5BD0]">
+                <span className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-[#135D66]">
                   Current project
                 </span>
-                <Icon name="file" className="h-4 w-4 text-[#6D5BD0]" />
+                <Icon name="file" className="h-4 w-4 text-[#135D66]" />
               </div>
               <h3 className="mt-2 text-xs font-extrabold leading-5 text-[#31304c]">
                 Open the project brief and manage your team.
@@ -557,17 +703,25 @@ function CoursesPage({ courses, onViewProject }) {
 function CourseProjectPage({
   course,
   data,
+  presence,
   loading,
   error,
   message,
   teamName,
   creatingTeam,
   joiningTeam,
+  leavingTeam,
   selectedProjectId,
+  teamFilters,
+  onTeamFiltersChange,
   onSelectProject,
   onTeamNameChange,
   onCreateTeam,
   onJoinTeam,
+  onPreviewTeam,
+  onLeaveTeam,
+  onSubmissionChanged,
+  currentUserId,
   onBack,
 }) {
   const project = data?.project || null
@@ -601,22 +755,23 @@ function CourseProjectPage({
         <>
           {projects.length > 1 && (
             <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.06)] sm:p-6">
-              <label className="text-xs font-semibold text-[#365c60]">Project
-                <select value={selectedProjectId || project.id} onChange={(event) => onSelectProject(event.target.value)} className="theme-control mt-1 w-full rounded-lg border p-2.5 text-sm sm:max-w-md">
-                  {projects.map((item) => <option key={item.id} value={item.id}>{item.title || `Project ${item.id}`}</option>)}
-                </select>
-              </label>
+              <div className="text-xs font-semibold text-[#365c60]">Viewing project: <span className="font-bold text-[#003C43]">{project.title || `Project ${project.id}`}</span>. Use the Teams filter below to switch project or filter availability.</div>
             </section>
           )}
           <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.06)] sm:p-6">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#6D5BD0]">
+                <div className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#135D66]">
                   Project brief
                 </div>
                 <p className="mt-3 max-w-3xl text-sm leading-6 text-[#587376]">
                   {project.description || project.prd || "No description has been added for this project."}
                 </p>
+                {data?.course?.instructor ? (
+                  <div className="mt-4 text-xs font-semibold text-[#135D66]">
+                    Instructor: {data.course.instructor.name}
+                  </div>
+                ) : null}
               </div>
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="theme-soft rounded-xl bg-[#f0f7f6] p-3">
@@ -646,14 +801,66 @@ function CourseProjectPage({
               </div>
             </div>
             {project.requirements && (
-              <button
-                onClick={() => openStudentProjectRequirements(project.id)}
-                className="mt-5 flex w-fit items-center justify-center gap-2 rounded-lg bg-[#E3FEF7] px-4 py-3 text-xs font-bold text-[#135D66] transition hover:bg-[#77B0AA] hover:text-[#003C43]"
-              >
-                <Icon name="file" className="h-4 w-4" />
-                View requirements PDF
-              </button>
+              <div className="mt-5 flex flex-wrap gap-3">
+                <button
+                  onClick={() => openStudentProjectRequirements(project.id)}
+                  className="flex w-fit items-center justify-center gap-2 rounded-lg bg-[#E3FEF7] px-4 py-3 text-xs font-bold text-[#135D66] transition hover:bg-[#77B0AA] hover:text-[#003C43]"
+                >
+                  <Icon name="file" className="h-4 w-4" />
+                  Preview requirements PDF
+                </button>
+                <button
+                  onClick={() => openStudentProjectRequirements(project.id, { download: true })}
+                  className="flex w-fit items-center justify-center gap-2 rounded-lg border border-[#003C43]/15 px-4 py-3 text-xs font-bold text-[#003C43] transition hover:bg-[#E3FEF7]"
+                >
+                  Download PDF
+                </button>
+                <div className="self-center text-[11px] text-[#718b8d]">
+                  {project.requirements.original_name || "requirements.pdf"}
+                </div>
+              </div>
             )}
+          </section>
+
+          <ProjectSubmission
+            teamId={teams.find((team) => team.is_member)?.id || null}
+            project={project}
+            onSubmitted={onSubmissionChanged}
+          />
+
+          <ProjectFeedbackPanel
+            project={project}
+            teamId={teams.find((team) => team.is_member)?.id || null}
+            teammates={teams.find((team) => team.is_member)?.members || []}
+            currentUserId={currentUserId}
+          />
+
+          <section className="theme-surface mt-6 rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.06)] sm:p-6">
+            <div className="mb-4 flex items-end justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-bold text-[#003C43]">Classmates</h2>
+                <p className="mt-1 text-xs text-[#6d898b]">Students enrolled in this course.</p>
+              </div>
+              <span className="rounded-full bg-[#E3FEF7] px-2.5 py-1 text-[10px] font-bold text-[#135D66]">
+                {(data?.classmates || []).length}
+              </span>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {(data?.classmates || []).map((classmate) => (
+                <div key={classmate.id} className="flex items-center gap-3 rounded-xl border border-[#003C43]/8 bg-[#f8fcfb] p-3">
+                  <Avatar user={classmate} className="h-9 w-9" showPresence presence={{ online: resolvePresence(presence, classmate).online }} />
+                  <div className="min-w-0">
+                    <div className="truncate text-xs font-bold text-[#003C43]">
+                      {classmate.name}{classmate.is_self ? " (You)" : ""}
+                    </div>
+                    <div className="truncate text-[10px] text-[#718b8d]">{classmate.is_self ? "Your account" : "Classmate"}</div>
+                  </div>
+                </div>
+              ))}
+              {(data?.classmates || []).length === 0 && (
+                <p className="text-xs text-[#6d898b]">No classmates found.</p>
+              )}
+            </div>
           </section>
 
           <section className="theme-surface mt-6 rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.06)] sm:p-6">
@@ -669,12 +876,12 @@ function CourseProjectPage({
                   onChange={(event) => onTeamNameChange(event.target.value)}
                   placeholder="Team name"
                   aria-label="Team name"
-                  className="theme-control flex-1 rounded-xl border border-[#003C43]/10 bg-white px-4 py-2.5 text-sm text-[#003C43] outline-none transition focus:border-[#6D5BD0] focus:ring-4 focus:ring-[#6D5BD0]/10"
+                  className="theme-control flex-1 rounded-xl border border-[#003C43]/10 bg-white px-4 py-2.5 text-sm text-[#003C43] outline-none transition focus:border-[#135D66] focus:ring-4 focus:ring-[#135D66]/10"
                 />
                 <button
                   type="submit"
                   disabled={creatingTeam}
-                  className="rounded-xl bg-[#6D5BD0] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#5c49c5] disabled:cursor-wait disabled:opacity-60"
+                  className="rounded-xl bg-[#135D66] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#003C43] disabled:cursor-wait disabled:opacity-60"
                 >
                   {creatingTeam ? "Creating..." : "Create team"}
                 </button>
@@ -683,16 +890,50 @@ function CourseProjectPage({
           </section>
 
           <section className="mt-6">
-            <div className="mb-4 flex items-end justify-between gap-4">
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <h2 className="text-lg font-bold text-[#003C43]">Teams in this course</h2>
                 <p className="mt-1 text-xs text-[#6d898b]">
-                  Every team created for this course project
+                  Search and filter teams by name, project, or availability.
                 </p>
               </div>
               <span className="rounded-full bg-[#E3FEF7] px-2.5 py-1 text-[10px] font-bold text-[#135D66]">
                 {teams.length} {teams.length === 1 ? "team" : "teams"}
               </span>
+            </div>
+            <div className="mb-4 grid gap-3 rounded-2xl border border-[#003C43]/8 bg-white p-4 shadow-sm sm:grid-cols-3">
+              <label className="block text-xs font-bold text-[#003C43]">
+                Team name
+                <input
+                  value={teamFilters?.search || ""}
+                  onChange={(event) => onTeamFiltersChange({ ...teamFilters, search: event.target.value })}
+                  placeholder="Search team name"
+                  className="mt-1.5 w-full rounded-xl border border-[#003C43]/15 px-3 py-2 text-sm outline-none focus:border-[#135D66]"
+                />
+              </label>
+              <label className="block text-xs font-bold text-[#003C43]">
+                Project
+                <select
+                  value={selectedProjectId || project.id}
+                  onChange={(event) => onSelectProject(event.target.value)}
+                  className="mt-1.5 w-full rounded-xl border border-[#003C43]/15 bg-white px-3 py-2 text-sm outline-none focus:border-[#135D66]"
+                >
+                  {projects.map((item) => <option key={item.id} value={item.id}>{item.title || `Project ${item.id}`}</option>)}
+                </select>
+              </label>
+              <label className="block text-xs font-bold text-[#003C43]">
+                Availability
+                <select
+                  value={teamFilters?.availability || ""}
+                  onChange={(event) => onTeamFiltersChange({ ...teamFilters, availability: event.target.value })}
+                  className="mt-1.5 w-full rounded-xl border border-[#003C43]/15 bg-white px-3 py-2 text-sm outline-none focus:border-[#135D66]"
+                >
+                  <option value="">All teams</option>
+                  <option value="available">Available</option>
+                  <option value="full">Full</option>
+                  <option value="closed">Closed</option>
+                </select>
+              </label>
             </div>
             <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
               {teams.map((team) => (
@@ -709,49 +950,85 @@ function CourseProjectPage({
                         Led by {team.members.find((member) => member.id === team.leader_id)?.name || "TBA"}
                       </div>
                     </div>
-                    <span className="shrink-0 rounded-md bg-[#f5f3ff] px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-[#6D5BD0]">
+                    <span className="shrink-0 rounded-md bg-[#E3FEF7] px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-[#135D66]">
                       {team.status || "forming"}
                     </span>
                   </div>
                   <div className="mt-4 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
                       <div className="flex -space-x-1.5">
-                        {team.members.map((member) => (
-                          <span
-                            key={member.id}
-                            className="theme-invert grid h-6 w-6 place-items-center rounded-full border-2 border-white bg-[#77B0AA] text-[8px] font-extrabold text-[#003C43]"
-                          >
-                            {member.name.split(" ").map((part) => part[0]).join("").slice(0, 2)}
-                          </span>
-                        ))}
+                         {team.members.map((member) => (
+                           <Avatar
+                             key={member.id}
+                             user={{
+                               id: member.id,
+                               first_name: member.name?.split(" ")[0],
+                               last_name: member.name?.split(" ").slice(1).join(" "),
+                               profile_picture: member.profile_picture,
+                             }}
+                             className="h-6 w-6"
+                             rounded="rounded-full"
+                             showPresence
+                             presence={{ online: resolvePresence(presence, member).online }}
+                           />
+                         ))}
+
                       </div>
                       <span className="text-[10px] font-semibold text-[#718b8d]">
                         {team.current_member_count}/{team.max_members}
                       </span>
+                      <span className="text-[10px] font-semibold text-[#718b8d]">
+                        {team.available_spots} spot{team.available_spots === 1 ? "" : "s"} open
+                      </span>
                     </div>
-                    <button
-                      disabled={
-                        joiningTeam === team.id ||
-                        team.is_member ||
-                        alreadyInTeam ||
-                        team.available_spots <= 0
-                      }
-                      onClick={() => onJoinTeam(team.id)}
-                      className="rounded-lg bg-[#E3FEF7] px-3 py-2 text-[10px] font-bold text-[#135D66] transition hover:bg-[#77B0AA] hover:text-[#003C43] disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {joiningTeam === team.id
-                        ? "Joining..."
-                        : team.is_member
-                          ? "Joined"
-                          : alreadyInTeam
-                            ? "Already in team"
-                            : team.available_spots <= 0
-                              ? "Full"
-                              : "Join team"}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {onPreviewTeam && (
+                        <button
+                          type="button"
+                          onClick={() => onPreviewTeam(team.id)}
+                          className="rounded-lg border border-[#003C43]/15 px-3 py-2 text-[10px] font-bold text-[#003C43] transition hover:bg-[#E3FEF7]"
+                        >
+                          View
+                        </button>
+                      )}
+                      {team.is_member ? (
+                        <button
+                          type="button"
+                          disabled={leavingTeam === team.id}
+                          onClick={() => onLeaveTeam(team.id)}
+                          className="rounded-lg border border-[#dc2626]/30 px-3 py-2 text-[10px] font-bold text-[#dc2626] transition hover:bg-[#fee2e2] disabled:opacity-60"
+                        >
+                          {leavingTeam === team.id ? "Leaving..." : "Leave"}
+                        </button>
+                      ) : (
+                        <button
+                          disabled={
+                            joiningTeam === team.id ||
+                            team.can_join_after_leaving === false ||
+                            (team.can_join_after_leaving === undefined && !team.can_join && team.available_spots <= 0)
+                          }
+                          onClick={() => onJoinTeam(team.id)}
+                          className="rounded-lg bg-[#E3FEF7] px-3 py-2 text-[10px] font-bold text-[#135D66] transition hover:bg-[#77B0AA] hover:text-[#003C43] disabled:cursor-not-allowed disabled:opacity-60"
+                          title={team.join_blocked_reason || "Join this team"}
+                        >
+                          {joiningTeam === team.id
+                            ? "Joining..."
+                            : team.requires_leave_current_team
+                              ? "Leave current to join"
+                              : team.available_spots <= 0
+                                ? "Full"
+                                : team.is_closed
+                                  ? "Closed"
+                                  : "Join team"}
+                        </button>
+                      )}
+                    </div>
                   </div>
                   {team.is_member && (
                     <div className="mt-3 text-[10px] font-bold text-[#135D66]">Your team</div>
+                  )}
+                  {team.join_blocked_reason && !team.is_member && (
+                    <div className="mt-2 text-[10px] text-[#718b8d]">{team.join_blocked_reason}</div>
                   )}
                 </article>
               ))}
@@ -789,6 +1066,8 @@ function TasksPage({
   onStatusFilterChange,
   onCreate,
   onOpen,
+  onMove,
+  connection,
 }) {
   const projectOptions = Array.from(
     new Map(
@@ -813,14 +1092,26 @@ function TasksPage({
             Manage your team tasks, assign work, and review instructor feedback.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onCreate}
-          disabled={myTeams.length === 0}
-          className="rounded-xl bg-[#135D66] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#003C43] disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          Create task
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <span
+            className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${
+              connection?.connected
+                ? "bg-[#E3FEF7] text-[#135D66]"
+                : "bg-[#fff0f0] text-[#a94646]"
+            }`}
+            title={connection?.error || "Realtime collaboration status"}
+          >
+            {connection?.connected ? "Live updates on" : "Live updates off"}
+          </span>
+          <button
+            type="button"
+            onClick={onCreate}
+            disabled={myTeams.length === 0}
+            className="rounded-xl bg-[#135D66] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#003C43] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Create task
+          </button>
+        </div>
       </div>
 
       {notice && <p className="theme-soft mt-4 rounded-xl p-3 text-xs text-[#135D66]" role="status">{notice}</p>}
@@ -859,45 +1150,19 @@ function TasksPage({
         </label>
       </div>
 
-      {loading ? (
-        <p className="mt-5 text-sm text-[#6d898b]">Loading tasks...</p>
-      ) : visibleTasks.length ? (
-        <div className="mt-5 overflow-x-auto">
-          <table className="w-full min-w-[820px] text-left text-sm">
-            <thead>
-              <tr className="border-b border-[#003C43]/10 text-[10px] font-bold uppercase tracking-[0.12em] text-[#77B0AA]">
-                <th className="py-3 pr-4">Task</th>
-                <th className="py-3 pr-4">Course / project</th>
-                <th className="py-3 pr-4">Assignee</th>
-                <th className="py-3 pr-4">Status</th>
-                <th className="py-3 pr-4">Due</th>
-                <th className="py-3 pr-4">Activity</th>
-                <th className="py-3"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#003C43]/7">
-              {visibleTasks.map((task) => (
-                <tr key={task.id}>
-                  <td className="py-3 pr-4">
-                    <div className="font-bold text-[#003C43]">{task.title}</div>
-                    <div className="text-[10px] text-[#718b8d]">{task.team?.name || "No team"}</div>
-                  </td>
-                  <td className="py-3 pr-4 text-xs text-[#587376]">
-                    <div>{task.course?.name || "—"}</div>
-                    <div className="text-[10px]">{task.project?.title || "—"}</div>
-                  </td>
-                  <td className="py-3 pr-4 text-xs text-[#587376]">{task.assignee?.name || <span className="italic text-[#718b8d]">Unassigned</span>}</td>
-                  <td className="py-3 pr-4"><span className={`rounded-md px-2 py-1 text-[10px] font-bold uppercase ${statusTone(task.status)}`}>{task.status.replaceAll("_", " ")}</span></td>
-                  <td className="py-3 pr-4 text-xs text-[#587376]">{formatDate(task.due_date)}</td>
-                  <td className="py-3 pr-4 text-[10px] text-[#718b8d]">{task.comment_count || 0} comments · {task.attachment_count || 0} files</td>
-                  <td className="py-3"><button type="button" onClick={() => onOpen(task)} className="theme-control rounded-lg px-3 py-2 text-[10px] font-bold text-[#135D66]">Open</button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <p className="theme-soft mt-5 rounded-xl p-4 text-sm text-[#587376]">No tasks match the current filters.</p>
+      <p className="mt-4 text-[11px] text-[#718b8d]">
+        Drag a card between columns or use its status selector to move a task.
+      </p>
+      <TaskKanbanBoard
+        tasks={visibleTasks}
+        loading={loading}
+        onOpen={onOpen}
+        onMove={onMove}
+      />
+      {!loading && visibleTasks.length === 0 && (
+        <p className="theme-soft mt-4 rounded-xl p-4 text-sm text-[#587376]">
+          No tasks match the current filters.
+        </p>
       )}
     </section>
   )
@@ -905,10 +1170,16 @@ function TasksPage({
 
 function SettingsPage({ student, onSaveAccount, onRequestPasswordReset }) {
   const [email, setEmail] = useState(student.email)
+  const [newPassword, setNewPassword] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
   const [currentPassword, setCurrentPassword] = useState("")
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
+
+  useEffect(() => {
+    setEmail(student.email)
+  }, [student.email])
 
   const saveDetails = async (event) => {
     event.preventDefault()
@@ -917,6 +1188,16 @@ function SettingsPage({ student, onSaveAccount, onRequestPasswordReset }) {
       setError("Enter a valid email address.")
       return
     }
+    if (newPassword) {
+      if (newPassword.length < 8) {
+        setError("New password must be at least 8 characters.")
+        return
+      }
+      if (newPassword !== confirmPassword) {
+        setError("New passwords do not match.")
+        return
+      }
+    }
     if (!currentPassword) {
       setError("Enter your current password to save changes.")
       return
@@ -924,8 +1205,10 @@ function SettingsPage({ student, onSaveAccount, onRequestPasswordReset }) {
     setError("")
     setSaving(true)
     try {
-      await onSaveAccount({ email, currentPassword })
+      await onSaveAccount({ email, currentPassword, newPassword: newPassword || undefined })
       setCurrentPassword("")
+      setNewPassword("")
+      setConfirmPassword("")
       setMessage("Your personal information has been updated.")
     } catch (requestError) {
       setError(requestError.message)
@@ -990,7 +1273,49 @@ function SettingsPage({ student, onSaveAccount, onRequestPasswordReset }) {
                   setMessage("")
                   setError("")
                 }}
-                className="theme-control mt-2 w-full rounded-xl border border-[#003C43]/10 bg-white px-4 py-3 text-sm text-[#003C43] outline-none transition focus:border-[#6D5BD0] focus:ring-4 focus:ring-[#6D5BD0]/10"
+                className="theme-control mt-2 w-full rounded-xl border border-[#003C43]/10 bg-white px-4 py-3 text-sm text-[#003C43] outline-none transition focus:border-[#135D66] focus:ring-4 focus:ring-[#135D66]/10"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="new-password"
+                className="text-[10px] font-bold text-[#587376]"
+              >
+                New password
+              </label>
+              <input
+                id="new-password"
+                type="password"
+                value={newPassword}
+                onChange={(event) => {
+                  setNewPassword(event.target.value)
+                  setMessage("")
+                  setError("")
+                }}
+                autoComplete="new-password"
+                placeholder="Leave blank to keep your current password"
+                className="theme-control mt-2 w-full rounded-xl border border-[#003C43]/10 bg-white px-4 py-3 text-sm text-[#003C43] outline-none transition focus:border-[#135D66] focus:ring-4 focus:ring-[#135D66]/10"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="confirm-password"
+                className="text-[10px] font-bold text-[#587376]"
+              >
+                Confirm new password
+              </label>
+              <input
+                id="confirm-password"
+                type="password"
+                value={confirmPassword}
+                onChange={(event) => {
+                  setConfirmPassword(event.target.value)
+                  setMessage("")
+                  setError("")
+                }}
+                autoComplete="new-password"
+                placeholder="Repeat your new password"
+                className="theme-control mt-2 w-full rounded-xl border border-[#003C43]/10 bg-white px-4 py-3 text-sm text-[#003C43] outline-none transition focus:border-[#135D66] focus:ring-4 focus:ring-[#135D66]/10"
               />
             </div>
             <div>
@@ -1011,7 +1336,7 @@ function SettingsPage({ student, onSaveAccount, onRequestPasswordReset }) {
                 }}
                 autoComplete="current-password"
                 placeholder="Required to change account details"
-                className="theme-control mt-2 w-full rounded-xl border border-[#003C43]/10 bg-white px-4 py-3 text-sm text-[#003C43] outline-none transition focus:border-[#6D5BD0] focus:ring-4 focus:ring-[#6D5BD0]/10"
+                className="theme-control mt-2 w-full rounded-xl border border-[#003C43]/10 bg-white px-4 py-3 text-sm text-[#003C43] outline-none transition focus:border-[#135D66] focus:ring-4 focus:ring-[#135D66]/10"
               />
             </div>
             {error && (
@@ -1027,7 +1352,7 @@ function SettingsPage({ student, onSaveAccount, onRequestPasswordReset }) {
             <button
               type="submit"
               disabled={saving}
-              className="rounded-xl bg-[#6D5BD0] px-5 py-3 text-xs font-bold text-white transition hover:bg-[#5c49c5] active:scale-[0.98] disabled:cursor-wait disabled:opacity-60"
+              className="rounded-xl bg-[#135D66] px-5 py-3 text-xs font-bold text-white transition hover:bg-[#003C43] active:scale-[0.98] disabled:cursor-wait disabled:opacity-60"
             >
               {saving ? "Saving changes..." : "Save changes"}
             </button>
@@ -1044,6 +1369,7 @@ function SettingsPage({ student, onSaveAccount, onRequestPasswordReset }) {
 }
 
 export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
+  const presence = usePresence()
   const [active, setActive] = useState("Overview")
   const [mobileOpen, setMobileOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -1074,6 +1400,37 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
   const [taskStatusFilter, setTaskStatusFilter] = useState("all")
   const [selectedTask, setSelectedTask] = useState(null)
   const [creatingTask, setCreatingTask] = useState(false)
+  const [previewTeam, setPreviewTeam] = useState(null)
+  const [previewLoadingId, setPreviewLoadingId] = useState(null)
+  const [leavingTeamId, setLeavingTeamId] = useState(null)
+  const [confirmLeaveTeam, setConfirmLeaveTeam] = useState(null)
+  const [teamFilters, setTeamFilters] = useState({ search: "", availability: "" })
+  const realtimeStatus = useRealtimeConnection()
+  const realtimeTeamIds =
+    active === "Tasks"
+      ? myTeams.map((team) => team.id)
+      : active === "Course Project"
+        ? (Array.isArray(projectData?.teams) ? projectData.teams : [])
+            .filter((team) => team.is_member)
+            .map((team) => team.id)
+        : []
+  useTeamRealtime(realtimeTeamIds, handleRealtimeEvent)
+
+  function handleRealtimeEvent(event, payload) {
+    if (event === "task_deleted") {
+      setTasks((items) => removeById(items, payload.task_id))
+      setSelectedTask((current) =>
+        current?.id === payload.task_id ? null : current,
+      )
+      return
+    }
+    if (!event.startsWith("task_") || !payload?.task) return
+    const updated = payload.task
+    setTasks((items) => upsertById(items, updated))
+    setSelectedTask((current) =>
+      current?.id === updated.id ? updated : current,
+    )
+  }
 
   useEffect(() => {
     let activeRequest = true
@@ -1147,27 +1504,30 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
     try {
       await joinStudentTeam(teamId)
       setJoinMessage("You joined the team.")
-    } catch (requestError) {
-      setPageError(requestError.message)
-      setJoiningTeam(null)
-      return
-    }
-
-    try {
+      setPreviewTeam(null)
       const updatedDashboard = await getStudentDashboard()
       setDashboard(updatedDashboard)
+      if (selectedCourse) await loadCourseProject(selectedCourse.id, selectedProjectId)
     } catch (requestError) {
-      setPageError(`You joined the team, but the dashboard could not refresh: ${requestError.message}`)
+      const msg = requestError.message || "Unable to join team."
+      setPageError(msg)
+      try { setDashboard(await getStudentDashboard()) } catch {}
+      if (selectedCourse) await loadCourseProject(selectedCourse.id, selectedProjectId)
     } finally {
       setJoiningTeam(null)
     }
   }
 
-  async function loadCourseProject(courseId, projectId = null) {
+  async function loadCourseProject(courseId, projectId = null, filters = null) {
+    const nextFilters = filters || teamFilters
     setProjectLoading(true)
     setProjectError("")
     try {
-      const data = await getStudentCourseTeams(courseId, projectId)
+      const data = await getStudentCourseTeams(courseId, {
+        projectId,
+        search: nextFilters.search || "",
+        availability: nextFilters.availability || "",
+      })
       setProjectData(data)
       if (projectId === null && data?.project?.id) setSelectedProjectId(data.project.id)
     } catch (requestError) {
@@ -1184,15 +1544,21 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
     setProjectError("")
     setProjectMessage("")
     setTeamName("")
+    setTeamFilters({ search: "", availability: "" })
     setActive("Course Project")
-    loadCourseProject(course.id)
+    loadCourseProject(course.id, null, { search: "", availability: "" })
   }
 
   function handleSelectProject(projectId) {
     setSelectedProjectId(Number(projectId))
     setProjectMessage("")
     setTeamName("")
-    loadCourseProject(selectedCourse.id, projectId)
+    loadCourseProject(selectedCourse.id, projectId, teamFilters)
+  }
+
+  function handleTeamFiltersChange(nextFilters) {
+    setTeamFilters(nextFilters)
+    if (selectedCourse) loadCourseProject(selectedCourse.id, selectedProjectId, nextFilters)
   }
 
   function handleBackToCourses() {
@@ -1235,21 +1601,108 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
     try {
       await joinStudentTeam(teamId)
       setProjectMessage("You joined the team.")
+      setPreviewTeam(null)
       await loadCourseProject(selectedCourse.id, selectedProjectId)
       const updatedDashboard = await getStudentDashboard()
       setDashboard(updatedDashboard)
     } catch (requestError) {
-      setProjectError(requestError.message)
+      const msg = requestError.message || "Unable to join team."
+      setProjectError(msg)
+      setPageError(msg)
+      if (selectedCourse) await loadCourseProject(selectedCourse.id, selectedProjectId)
+      try { setDashboard(await getStudentDashboard()) } catch {}
     } finally {
       setJoiningTeam(null)
     }
   }
 
-  async function handleSaveAccount({ email, currentPassword }) {
-    await updateStudentAccount({ email, currentPassword })
-    const updatedProfile = { ...dashboard.student, email }
+  async function handleSaveAccount({ email, currentPassword, newPassword }) {
+    const response = await updateStudentAccount({ email, currentPassword, newPassword })
+    const updatedEmail = response?.user?.email || email
+    const updatedProfile = { ...dashboard.student, email: updatedEmail }
     setDashboard((current) => ({ ...current, student: updatedProfile }))
     setProfile(updatedProfile)
+    return response
+  }
+
+  async function refreshProfile() {
+    const [profileData, dashboardData] = await Promise.all([
+      getStudentProfile(),
+      getStudentDashboard(),
+    ])
+    setProfile(profileData.student)
+    setDashboard(dashboardData)
+  }
+
+  async function handlePreviewTeam(teamId) {
+    setPreviewLoadingId(teamId)
+    setPageError("")
+    setProjectError("")
+    try {
+      const data = await getStudentTeamPreview(teamId)
+      setPreviewTeam(data.team || data)
+    } catch (requestError) {
+      const msg = requestError.message || "Unable to load team preview."
+      setPageError(msg)
+      setProjectError(msg)
+    } finally {
+      setPreviewLoadingId(null)
+    }
+  }
+
+  async function handleLeaveTeam(teamId) {
+    setLeavingTeamId(teamId)
+    setPageError("")
+    setProjectError("")
+    setProjectMessage("")
+    setJoinMessage("")
+    try {
+      await leaveStudentTeam(teamId)
+      setPreviewTeam(null)
+      setConfirmLeaveTeam(null)
+      const [dashboardData, profileData] = await Promise.all([
+        getStudentDashboard(),
+        active === "My Profile" ? getStudentProfile() : Promise.resolve(null),
+      ])
+      setDashboard(dashboardData)
+      if (profileData?.student) setProfile(profileData.student)
+      if (selectedCourse) await loadCourseProject(selectedCourse.id, selectedProjectId)
+      setProjectMessage("You left the team.")
+      setJoinMessage("You left the team.")
+    } catch (requestError) {
+      const msg = requestError.message || "Unable to leave team."
+      setPageError(msg)
+      setProjectError(msg)
+      throw requestError
+    } finally {
+      setLeavingTeamId(null)
+    }
+  }
+
+  async function handleRemoveTeamMember(teamId, memberId) {
+    setPageError("")
+    try {
+      await removeStudentTeamMember(teamId, memberId)
+      if (previewTeam?.id === teamId) await handlePreviewTeam(teamId)
+      if (selectedCourse) await loadCourseProject(selectedCourse.id, selectedProjectId, teamFilters)
+      await refreshProfile()
+    } catch (requestError) {
+      setPageError(requestError.message || "Unable to remove team member.")
+      throw requestError
+    }
+  }
+
+  async function handleTransferLeadership(teamId, newLeaderId) {
+    setPageError("")
+    try {
+      await transferStudentTeamLeadership(teamId, newLeaderId)
+      if (previewTeam?.id === teamId) await handlePreviewTeam(teamId)
+      if (selectedCourse) await loadCourseProject(selectedCourse.id, selectedProjectId, teamFilters)
+      await refreshProfile()
+    } catch (requestError) {
+      setPageError(requestError.message || "Unable to transfer leadership.")
+      throw requestError
+    }
   }
 
   function handleTaskCreated(task) {
@@ -1261,6 +1714,32 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
   function handleTaskUpdated(updated) {
     setTasks((items) => items.map((item) => (item.id === updated.id ? updated : item)))
     setSelectedTask(updated)
+  }
+
+  async function handleTaskStatusChange(task, status) {
+    if (!status || status === task.status) return
+    setTaskNotice("")
+    setTasksError("")
+    setTasks((items) =>
+      items.map((item) => (item.id === task.id ? { ...item, status } : item)),
+    )
+    setSelectedTask((current) =>
+      current?.id === task.id ? { ...current, status } : current,
+    )
+    try {
+      const updated = await updateTask(task.id, { status })
+      setTasks((items) => items.map((item) => (item.id === updated.id ? updated : item)))
+      setSelectedTask((current) =>
+        current?.id === updated.id ? updated : current,
+      )
+      setTaskNotice(`Task moved to ${status.replaceAll("_", " ")}.`)
+    } catch (requestError) {
+      setTasks((items) =>
+        items.map((item) => (item.id === task.id ? task : item)),
+      )
+      setSelectedTask((current) => (current?.id === task.id ? task : current))
+      setTasksError(requestError.message || "Unable to move the task.")
+    }
   }
 
   function handleTaskDeleted(taskId) {
@@ -1311,6 +1790,7 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
           collapsed={sidebarCollapsed}
           onToggleCollapsed={() => setSidebarCollapsed(!sidebarCollapsed)}
           student={student}
+          presence={presence}
           onLogout={onLogout}
         />
         <main
@@ -1371,15 +1851,20 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
               </button>
               <div className="hidden h-8 w-px bg-[#003C43]/10 sm:block" />
               <div className="hidden items-center gap-2.5 sm:flex">
-                <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#135D66] text-xs font-bold text-white">
-                  {`${(student.first_name || "?")[0]}${(student.last_name || "?")[0]}`}
-                </div>
+                <Avatar
+                  user={student}
+                  className="h-9 w-9"
+                  showPresence
+                  presence={{ online: resolvePresence(presence, student).online }}
+                />
                 <div className="hidden xl:block">
                   <div className="text-xs font-bold text-[#003C43]">
                     {student.full_name}
                   </div>
                   <div className="text-[10px] text-[#6d898b]">
-                    {student.major || student.domain || "Student"}
+                    {resolvePresence(presence, student).online
+                      ? "Online now"
+                      : formatLastSeen(resolvePresence(presence, student).last_seen)}
                   </div>
                 </div>
               </div>
@@ -1546,12 +2031,18 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
                             <div className="mt-2 flex items-center gap-2">
                               <div className="flex -space-x-1.5">
                                 {team.members.map((member) => (
-                                  <span
+                                  <Avatar
                                     key={member.id}
-                                    className="theme-invert grid h-5 w-5 place-items-center rounded-full border-2 border-white bg-[#77B0AA] text-[7px] font-extrabold text-[#003C43]"
-                                  >
-                                    {member.name.split(" ").map((part) => part[0]).join("").slice(0, 2)}
-                                  </span>
+                                    user={{
+                                      id: member.id,
+                                      first_name: member.name?.split(" ")[0],
+                                      last_name: member.name?.split(" ").slice(1).join(" "),
+                                    }}
+                                    className="h-5 w-5"
+                                    rounded="rounded-full"
+                                    showPresence
+                                    presence={{ online: resolvePresence(presence, member).online }}
+                                  />
                                 ))}
                               </div>
                               <span className="text-[9px] font-semibold text-[#77B0AA]">
@@ -1563,9 +2054,37 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
                               </span>
                             </div>
                           </div>
-                          <button disabled={joiningTeam === team.id} onClick={() => handleJoinTeam(team.id)} className="rounded-lg bg-[#E3FEF7] px-3 py-2 text-[10px] font-bold text-[#135D66] transition hover:bg-[#77B0AA] hover:text-[#003C43] disabled:cursor-wait disabled:opacity-60">
-                            {joiningTeam === team.id ? "Joining..." : "Join team"}
-                          </button>
+                          <div className="flex shrink-0 flex-col gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handlePreviewTeam(team.id)}
+                              className="rounded-lg border border-[#003C43]/15 px-3 py-2 text-[10px] font-bold text-[#003C43] transition hover:bg-[#E3FEF7]"
+                            >
+                              {previewLoadingId === team.id ? "Loading..." : "View"}
+                            </button>
+                            <button
+                              disabled={
+                                joiningTeam === team.id ||
+                                team.is_member ||
+                                team.can_join_after_leaving === false
+                              }
+                              onClick={() => handleJoinTeam(team.id)}
+                              className="rounded-lg bg-[#E3FEF7] px-3 py-2 text-[10px] font-bold text-[#135D66] transition hover:bg-[#77B0AA] hover:text-[#003C43] disabled:cursor-not-allowed disabled:opacity-60"
+                              title={team.join_blocked_reason || "Join this team"}
+                            >
+                              {joiningTeam === team.id
+                                ? "Joining..."
+                                : team.is_member
+                                  ? "Joined"
+                                  : team.requires_leave_current_team
+                                    ? "Leave to join"
+                                    : team.available_spots <= 0
+                                      ? "Full"
+                                      : team.is_closed
+                                        ? "Closed"
+                                        : "Join team"}
+                            </button>
+                          </div>
                         </article>
                       ))}
                       {availableTeams.length === 0 && (
@@ -1576,7 +2095,21 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
                 </div>
               </>
             ) : active === "My Profile" ? (
-              profile ? <ProfilePage profile={profile} onRefreshProfile={async () => { const data = await getStudentProfile(); setProfile(data.student) }} /> : pageError ? <p className="text-xs text-[#a94646]" role="alert">{pageError}</p> : <p className="text-xs text-[#6d898b]" role="status">Loading your profile...</p>
+              profile ? (
+                <ProfilePage
+                  profile={profile}
+                  presence={presence}
+                  onChanged={refreshProfile}
+                  onPreviewTeam={handlePreviewTeam}
+                  onLeaveTeam={(teamId) => setConfirmLeaveTeam({ id: teamId })}
+                />
+              ) : pageError ? <p className="text-xs text-[#a94646]" role="alert">{pageError}</p> : <p className="text-xs text-[#6d898b]" role="status">Loading your profile...</p>
+            ) : active === "Students" ? (
+              <StudentsPage presence={presence} />
+            ) : active === "Team Chats" ? (
+              <TeamChatPanel currentUserId={profile?.id} />
+            ) : active === "Friends" ? (
+              <FriendsPage presence={presence} />
             ) : active === "My Courses" ? (
               coursePageData ? <CoursesPage courses={coursePageData} onViewProject={handleViewProject} /> : pageError ? <p className="text-xs text-[#a94646]" role="alert">{pageError}</p> : <p className="text-xs text-[#6d898b]" role="status">Loading your courses...</p>
             ) : active === "Course Project" ? (
@@ -1584,17 +2117,24 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
                 <CourseProjectPage
                   course={selectedCourse}
                   data={projectData}
+                  presence={presence}
                   loading={projectLoading}
                   error={projectError}
                   message={projectMessage}
                   teamName={teamName}
                   creatingTeam={creatingTeam}
                   joiningTeam={joiningTeam}
+                  leavingTeam={leavingTeamId}
                   selectedProjectId={selectedProjectId}
+                  teamFilters={teamFilters}
+                  onTeamFiltersChange={handleTeamFiltersChange}
                   onSelectProject={handleSelectProject}
                   onTeamNameChange={setTeamName}
                   onCreateTeam={handleCreateTeam}
                   onJoinTeam={handleJoinProjectTeam}
+                  onPreviewTeam={handlePreviewTeam}
+                  onLeaveTeam={(teamId) => setConfirmLeaveTeam({ id: teamId })}
+                  currentUserId={profile?.id}
                   onBack={handleBackToCourses}
                 />
               ) : (
@@ -1616,13 +2156,22 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
                 onStatusFilterChange={setTaskStatusFilter}
                 onCreate={() => { setTaskNotice(""); setCreatingTask(true) }}
                 onOpen={(task) => { setTaskNotice(""); setSelectedTask(task) }}
+                onMove={handleTaskStatusChange}
+                connection={realtimeStatus}
               />
-            ) : (
+            ) : active === "My Grades" ? (
+              <MyGrades />
+            ) : active === "Settings" ? (
               <SettingsPage
-                student={student}
+                account={student}
+                accountType="student"
                 onSaveAccount={handleSaveAccount}
                 onRequestPasswordReset={onRequestPasswordReset}
               />
+            ) : (
+              <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 text-sm text-[#6d898b]">
+                This page is not available.
+              </section>
             )}
             {selectedTask && (
               <TaskDetailsModal
@@ -1640,6 +2189,31 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
                 teams={myTeams}
                 onClose={() => setCreatingTask(false)}
                 onCreated={handleTaskCreated}
+              />
+            )}
+            {previewTeam && (
+              <TeamPreviewModal
+                team={previewTeam}
+                presence={presence}
+                currentUserId={student.id}
+                onClose={() => setPreviewTeam(null)}
+                onJoin={async (teamId) => {
+                  if (selectedCourse) await handleJoinProjectTeam(teamId)
+                  else await handleJoinTeam(teamId)
+                }}
+                onLeave={handleLeaveTeam}
+                onRemoveMember={handleRemoveTeamMember}
+                onTransferLeadership={handleTransferLeadership}
+              />
+            )}
+            {confirmLeaveTeam && (
+              <ConfirmDialog
+                title="Leave team?"
+                message="You will be removed from this team. You can join another eligible team afterward."
+                confirmLabel="Leave team"
+                destructive
+                onClose={() => setConfirmLeaveTeam(null)}
+                onConfirm={() => handleLeaveTeam(confirmLeaveTeam.id)}
               />
             )}
           </div>
