@@ -9,9 +9,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
 
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./sql/sql-schema.sql:/docker-entrypoint-initdb.d/init.sql
@@ -24,15 +21,15 @@ services:
     container_name: team-platform-backend
     restart: unless-stopped
 
-    ports:
-      - "5000:5000"
-
     env_file:
       - .env
 
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
+      FRONTEND_ORIGIN: ${WAF_PUBLIC_ORIGIN:-http://localhost:8080}
+      FRONTEND_ORIGINS: ${WAF_PUBLIC_ORIGIN:-http://localhost:8080}
+      MICROSOFT_REDIRECT_URI: ${WAF_PUBLIC_ORIGIN:-http://localhost:8080}/auth/microsoft/callback
 
     depends_on:
       - postgres
@@ -45,9 +42,6 @@ services:
     container_name: team-platform-frontend
     restart: unless-stopped
 
-    ports:
-      - "5173:5173"
-
     volumes:
       - ./fe:/app
       - /app/node_modules
@@ -55,6 +49,46 @@ services:
     environment:
       NODE_ENV: development
 
+  waf:
+    image: owasp/modsecurity-crs:4.25.2-nginx-202611190211-lts@sha256:98d448750b86f5f94ca570590dd1461e3ab24efc97e7c41b271a55ac33b331fe
+    container_name: team-platform-waf
+    restart: unless-stopped
+
+    ports:
+      - "${WAF_HTTP_PORT:-8080}:8080"
+
+    env_file:
+      - ./waf/modsecurity.env
+
+    environment:
+      PORT: "8080"
+      SERVER_NAME: ${WAF_SERVER_NAME:-localhost}
+      CLIENT_BODY_TIMEOUT: "60s"
+      PROXY_TIMEOUT: "300s"
+
+    volumes:
+      - ./waf/nginx/default.conf.template:/etc/nginx/templates/conf.d/default.conf.template:ro
+      - ./waf/nginx/00-connection-map.conf.template:/etc/nginx/templates/conf.d/00-connection-map.conf.template:ro
+      - ./waf/nginx/proxy-headers.conf.template:/etc/nginx/templates/includes/proxy-headers.conf.template:ro
+      - ./waf/nginx/security-headers.conf.template:/etc/nginx/templates/includes/security-headers.conf.template:ro
+      - ./waf/modsecurity-override.conf.template:/etc/nginx/templates/modsecurity.d/modsecurity-override.conf.template:ro
+
+    healthcheck:
+      test: ["CMD", "curl", "--ipv4", "--fail", "--silent", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+    depends_on:
+      - backend
+      - frontend
 
 
 volumes:

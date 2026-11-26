@@ -1,0 +1,10 @@
+SecRuleEngine On
+SecRequestBodyAccess On
+SecRequestBodyLimit 115343360
+SecRequestBodyNoFilesLimit 1048576
+SecRequestBodyLimitAction Reject
+SecArgumentsLimit 255
+
+SecResponseBodyAccess On
+SecResponseBodyLimit 1048576
+SecResponseBodyLimitAction ProcessPartial

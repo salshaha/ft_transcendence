@@ -40,6 +40,9 @@ ft_transcendence
 │       ├── layouts
 │       ├── pages
 │       └── services
+├── waf
+│   ├── modsecurity-override.conf.template
+│   └── nginx
 ├── Makefile
 ├── README.md
 ├── tasks
@@ -49,3 +52,14 @@ ft_transcendence
 └── update_info
     └── update_info.py
 ```
+
+### Request ingress
+
+Browser traffic enters through the Nginx + ModSecurity + OWASP CRS service.
+Nginx proxies `/api/` and `/auth/` to Flask, and all other application paths
+to the Vite frontend. The frontend uses same-origin API URLs. The Flask,
+frontend, and PostgreSQL services have no published host ports; PostgreSQL and
+the application services communicate over the private Compose network.
+
+See [waf.md](waf.md) for the pinned WAF image, configuration, audit logs, and
+local/deployment commands.

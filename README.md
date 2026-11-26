@@ -343,11 +343,15 @@ POSTGRES_USER=postgres
 POSTGRES_PASSWORD=change-this-password
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
+WAF_PUBLIC_ORIGIN=http://localhost:8080
+WAF_HTTP_PORT=8080
+WAF_SERVER_NAME=localhost
 
 DATABASE_URL=postgresql://postgres:change-this-password@localhost:5432/ft_transcendence
 ```
 
-The exact database variables may change when the PostgreSQL/Docker configuration is finalized.
+The browser-facing application origin is the WAF. Flask and PostgreSQL use
+private Compose networking.
 
 Never commit real passwords, API keys, tokens, or other secrets.
 
@@ -446,61 +450,23 @@ flask --app run.py db upgrade
 
 ---
 
-## 5. Run the Flask backend
+## 5. Run the application
 
-From inside `be/`:
-
-```bash
-python run.py
-```
-
-The Flask development server should start.
-
-Alternatively:
-
-```bash
-flask --app run.py run
-```
-
-The exact command used by the team should be documented once the backend configuration is finalized.
+Use the Docker Compose instructions below to start the full application through
+the WAF. Do not publish or browse directly to Flask's port.
 
 ---
 
 # Frontend Setup
 
-Open another terminal and return to the project root:
+The frontend is served by Vite behind the WAF in the Compose setup. From the
+repository root, build and start the services:
 
 ```bash
-cd ft_transcendence
+docker compose up -d --build
 ```
 
-Enter the frontend:
-
-```bash
-cd fe
-```
-
-Install the Node dependencies:
-
-```bash
-npm install
-```
-
-Run the React development server:
-
-```bash
-npm run dev
-```
-
-The exact frontend command depends on the React build tool configured in `package.json`.
-
-If the project uses a different script, check:
-
-```bash
-cat package.json
-```
-
-and run the appropriate script.
+Open `http://localhost:8080`; do not use the unexposed Vite port directly.
 
 ---
 
@@ -510,20 +476,15 @@ The project uses **PostgreSQL** as its database.
 
 SQLite is not used as the project's production/development database.
 
-The intended architecture is:
+The request path is:
 
 ```text
-React
-   │
-   │ HTTP
-   ▼
-Flask API
+Browser
    │
    ▼
-SQLAlchemy
-   │
-   ▼
-PostgreSQL
+Nginx + ModSecurity + OWASP CRS
+   ├── /api/ and /auth/ ──► Flask ──► SQLAlchemy ──► PostgreSQL
+   └── other paths ───────► Vite frontend
 ```
 
 Database models belong in:
@@ -602,6 +563,23 @@ Build and start:
 ```bash
 docker compose up -d --build
 ```
+
+The application is served through the Nginx + ModSecurity + OWASP CRS gateway at
+`http://localhost:8080` by default. The frontend and Flask backend are reachable
+only on the private Compose network; PostgreSQL is not published to the host.
+Set `WAF_HTTP_PORT` to change the host port and `WAF_PUBLIC_ORIGIN` to its
+matching public URL.
+
+Inspect WAF and audit logs (the Docker log driver rotates WAF logs):
+
+```bash
+docker compose logs -f waf
+docker compose logs --since=10m waf | grep -E 'ModSecurity|949110|949111'
+```
+
+See [docs/waf.md](docs/waf.md) for the routing, configuration, audit-log,
+verification, and HTTPS deployment details. This Compose configuration uses
+HTTP for local development; configure TLS before exposing it to the Internet.
 
 View running containers:
 
@@ -700,38 +678,11 @@ The expected development environment consists of:
 └──────────────────────────┘
 ```
 
-During development, the frontend and backend may run separately.
-
-### Terminal 1 — Database
-
-Start PostgreSQL using the project's Docker configuration:
+During development, start the services from the repository root so browser
+requests continue to pass through the WAF:
 
 ```bash
-docker compose up -d
-```
-
-### Terminal 2 — Backend
-
-```bash
-cd be
-source .venv/bin/activate
-python run.py
-```
-
-For Fish:
-
-```fish
-cd be
-source .venv/bin/activate.fish
-python run.py
-```
-
-### Terminal 3 — Frontend
-
-```bash
-cd fe
-npm install
-npm run dev
+docker compose up -d --build
 ```
 
 ---
@@ -1100,16 +1051,11 @@ Make sure the PostgreSQL host, port, username, password, and database name match
 
 ## Frontend dependencies are missing
 
-From `fe/`:
+Rebuild the frontend image so Compose installs its locked dependencies:
 
 ```bash
-npm install
-```
-
-Then:
-
-```bash
-npm run dev
+docker compose build frontend
+docker compose up -d frontend waf
 ```
 
 ---

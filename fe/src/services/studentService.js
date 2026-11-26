@@ -37,8 +37,7 @@ export function createStudentTeam({ projectId, name }) {
 }
 
 export function openStudentProjectRequirements(projectId) {
-  const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "");
-  window.open(`${API_URL}/api/student/projects/${projectId}/requirements`, "_blank", "noopener,noreferrer");
+  window.open(`/api/student/projects/${projectId}/requirements`, "_blank", "noopener,noreferrer");
 }
 
 export function updateStudentAccount({ email, currentPassword }) {

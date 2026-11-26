@@ -24,16 +24,14 @@ def env_int(name, default):
 
 
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
-FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
+FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:8080")
 FRONTEND_ORIGINS = [
     origin.strip()
     for origin in os.getenv("FRONTEND_ORIGINS", FRONTEND_ORIGIN).split(",")
     if origin.strip()
 ]
 
-# Flask currently runs on the host, so PostgreSQL is reached through the
-# published Compose port. If Flask is containerized later, set POSTGRES_HOST
-# to the Compose service name (postgres) and POSTGRES_PORT to 5432.
+# In Compose, Flask reaches PostgreSQL through the private service network.
 DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL:
     SQLALCHEMY_DATABASE_URI = DATABASE_URL
@@ -88,6 +86,6 @@ MICROSOFT_AUTHORITY = os.getenv(
 )
 MICROSOFT_REDIRECT_URI = os.getenv(
     "MICROSOFT_REDIRECT_URI",
-    "http://localhost:5000/auth/microsoft/callback",
+    "http://localhost:8080/auth/microsoft/callback",
 )
 MICROSOFT_SCOPES = ["User.Read"]
