@@ -1,11 +1,10 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import PasswordSecurityCard from "../components/auth/PasswordSecurityCard"
 import TaskDetailsModal from "../components/instructor/TaskDetailsModal"
 import Avatar from "../components/student/Avatar"
 import AvatarManager from "../components/student/AvatarManager"
 import SkillManager from "../components/student/SkillManager"
 import ConfirmDialog from "../components/student/ConfirmDialog"
-import FriendsPage from "../components/student/FriendsPage"
 import ProjectFeedbackPanel from "../components/student/ProjectFeedbackPanel"
 import ProjectSubmission from "../components/student/ProjectSubmission"
 import SettingsPage from "../components/SettingsPage"
@@ -21,6 +20,7 @@ import { usePresence } from "../hooks/usePresence"
 import StudentsPage from "./StudentsPage"
 import { removeById, upsertById } from "../services/realtimeReducers"
 import { listTasks, updateTask } from "../services/taskService"
+import { completeTeamJoin } from "../services/teamJoinService"
 import {
   createStudentTeam,
   getStudentCourseTeams,
@@ -29,12 +29,10 @@ import {
   getStudentProfile,
   getStudentTeamPreview,
   getStudentTeams,
-  joinStudentTeam,
   leaveStudentTeam,
   openStudentProjectRequirements,
   removeStudentTeamMember,
   transferStudentTeamLeadership,
-  updateMyProfile,
   updateStudentAccount,
 } from "../services/studentService"
 
@@ -172,7 +170,6 @@ const navItems = [
   { label: "Students", icon: "users" },
   { label: "My Courses", icon: "book" },
   { label: "Team Chats", icon: "chat" },
-  { label: "Friends", icon: "userPlus" },
   { label: "Tasks", icon: "clipboard" },
   { label: "My Grades", icon: "file" },
   { label: "Settings", icon: "settings" },
@@ -359,56 +356,16 @@ function PageHeading({
   )
 }
 
-function ProfilePage({ profile, presence, onChanged, onPreviewTeam, onLeaveTeam }) {
-  const [editing, setEditing] = useState(false)
-  const [form, setForm] = useState({
-    major: profile.major || "",
-    domain: profile.domain || "",
-    joined_year: profile.joined_year || "",
-  })
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState("")
-  const [message, setMessage] = useState("")
-
-  useEffect(() => {
-    setForm({
-      major: profile.major || "",
-      domain: profile.domain || "",
-      joined_year: profile.joined_year || "",
-    })
-  }, [profile])
-
+function ProfilePage({ profile, presence, onChanged }) {
   const selfPresence = resolvePresence(presence, profile)
   const online = selfPresence.online
-  const team = profile.team || profile.current_project?.team || null
-
-  async function saveDetails(event) {
-    event.preventDefault()
-    setSaving(true)
-    setError("")
-    setMessage("")
-    try {
-      await updateMyProfile({
-        major: form.major.trim(),
-        domain: form.domain.trim(),
-        joined_year: form.joined_year ? Number(form.joined_year) : "",
-      })
-      setMessage("Profile details updated.")
-      setEditing(false)
-      if (onChanged) await onChanged()
-    } catch (requestError) {
-      setError(requestError.message || "Unable to update profile.")
-    } finally {
-      setSaving(false)
-    }
-  }
 
   return (
     <div>
       <PageHeading
         eyebrow="Student profile"
         title="My Profile"
-        description="Keep your academic identity, skills, and project presence up to date."
+        description="Review your academic identity and manage your skills."
       />
 
       <div className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
@@ -439,196 +396,52 @@ function ProfilePage({ profile, presence, onChanged, onPreviewTeam, onLeaveTeam 
             {profile.email}
           </p>
 
-          {error ? (
-            <div className="mt-4 rounded-xl bg-[#fff0f0] px-3 py-2 text-[11px] font-semibold text-[#a94646]">
-              {error}
-            </div>
-          ) : null}
-          {message ? (
-            <div className="mt-4 rounded-xl bg-[#E3FEF7] px-3 py-2 text-[11px] font-semibold text-[#135D66]">
-              {message}
-            </div>
-          ) : null}
-
-          {editing ? (
-            <form onSubmit={saveDetails} className="mt-5 space-y-3 border-t border-[#003C43]/8 pt-5">
-              <label className="block text-[10px] font-bold uppercase tracking-wide text-[#77B0AA]">
+          <div className="mt-5 space-y-4 border-t border-[#003C43]/8 pt-5">
+            <div>
+              <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">
                 Major
-                <input
-                  value={form.major}
-                  onChange={(event) => setForm((current) => ({ ...current, major: event.target.value }))}
-                  className="mt-1 w-full rounded-xl border border-[#003C43]/12 px-3 py-2 text-xs font-semibold text-[#18484d] outline-none focus:border-[#135D66]"
-                />
-              </label>
-              <label className="block text-[10px] font-bold uppercase tracking-wide text-[#77B0AA]">
-                Academic department
-                <input
-                  value={form.domain}
-                  onChange={(event) => setForm((current) => ({ ...current, domain: event.target.value }))}
-                  className="mt-1 w-full rounded-xl border border-[#003C43]/12 px-3 py-2 text-xs font-semibold text-[#18484d] outline-none focus:border-[#135D66]"
-                />
-              </label>
-              <label className="block text-[10px] font-bold uppercase tracking-wide text-[#77B0AA]">
-                Joined year
-                <input
-                  type="number"
-                  min="1990"
-                  max="2100"
-                  value={form.joined_year}
-                  onChange={(event) => setForm((current) => ({ ...current, joined_year: event.target.value }))}
-                  className="mt-1 w-full rounded-xl border border-[#003C43]/12 px-3 py-2 text-xs font-semibold text-[#18484d] outline-none focus:border-[#135D66]"
-                />
-              </label>
-              <div className="flex gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={() => setEditing(false)}
-                  className="rounded-xl border border-[#003C43]/15 px-3 py-2 text-[11px] font-bold text-[#003C43]"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="rounded-xl bg-[#135D66] px-3 py-2 text-[11px] font-bold text-white disabled:opacity-60"
-                >
-                  {saving ? "Saving..." : "Save details"}
-                </button>
               </div>
-            </form>
-          ) : (
-            <div className="mt-5 space-y-4 border-t border-[#003C43]/8 pt-5">
-              <div>
-                <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">
-                  Major
-                </div>
-                <div className="mt-1 text-xs font-bold text-[#18484d]">
-                  {profile.major || "Not provided"}
-                </div>
+              <div className="mt-1 text-xs font-bold text-[#18484d]">
+                {profile.major || "Not provided"}
               </div>
-              <div>
-                <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">
-                  Academic department
-                </div>
-                <div className="mt-1 text-xs font-bold text-[#18484d]">
-                  {profile.domain || "Not provided"}
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">Student ID</div>
-                  <div className="mt-1 text-[11px] font-bold text-[#18484d]">
-                    {profile.student_id || "—"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">Joined</div>
-                  <div className="mt-1 text-[11px] font-bold text-[#18484d]">
-                    {profile.joined_year || "—"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">GPA</div>
-                  <div className="mt-1 text-[11px] font-bold text-[#18484d]">
-                    {profile.gpa === null || profile.gpa === undefined
-                      ? "—"
-                      : Number(profile.gpa).toFixed(2)}
-                  </div>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setEditing(true)}
-                className="rounded-xl border border-[#77B0AA]/50 px-3 py-2 text-[11px] font-bold text-[#135D66] transition hover:bg-[#E3FEF7]"
-              >
-                Edit details
-              </button>
             </div>
-          )}
+            <div>
+              <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">
+                Academic department
+              </div>
+              <div className="mt-1 text-xs font-bold text-[#18484d]">
+                {profile.domain || "Not provided"}
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">Student ID</div>
+                <div className="mt-1 text-[11px] font-bold text-[#18484d]">
+                  {profile.student_id || "—"}
+                </div>
+              </div>
+              <div>
+                <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">Joined</div>
+                <div className="mt-1 text-[11px] font-bold text-[#18484d]">
+                  {profile.joined_year || "—"}
+                </div>
+              </div>
+              <div>
+                <div className="text-[9px] font-bold uppercase tracking-wider text-[#77B0AA]">GPA</div>
+                <div className="mt-1 text-[11px] font-bold text-[#18484d]">
+                  {profile.gpa === null || profile.gpa === undefined
+                    ? "—"
+                    : Number(profile.gpa).toFixed(2)}
+                </div>
+              </div>
+            </div>
+            <p className="text-[10px] leading-5 text-[#718b8d]">
+              Academic details are managed by your school and cannot be changed here.
+            </p>
+          </div>
         </section>
 
         <div className="space-y-6">
-          <section className="theme-surface rounded-2xl bg-white p-6 shadow-[0_8px_30px_rgba(0,60,67,0.06)]">
-            <h3 className="text-sm font-extrabold text-[#003C43]">Academic context</h3>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {(profile.courses || []).map((course) => (
-                <span
-                  key={course.id}
-                  className="rounded-xl bg-[#E3FEF7] px-2.5 py-1.5 text-[11px] font-bold text-[#135D66]"
-                >
-                  {course.name}
-                </span>
-              ))}
-              {(profile.courses || []).length === 0 ? (
-                <span className="text-xs text-[#718b8d]">No courses enrolled yet.</span>
-              ) : null}
-            </div>
-
-            {profile.current_project ? (
-              <div className="mt-4 rounded-2xl border border-[#003C43]/8 bg-[#f5faf9] p-4">
-                <div className="text-[10px] font-bold uppercase tracking-wide text-[#77B0AA]">
-                  Current project
-                </div>
-                <div className="mt-1 text-sm font-extrabold text-[#003C43]">
-                  {profile.current_project.title}
-                </div>
-                {team ? (
-                  <div className="mt-3">
-                    <div className="text-[11px] font-bold text-[#135D66]">
-                      {team.name} · {team.status?.replaceAll("_", " ")}
-                    </div>
-                    <div className="mt-1 text-[11px] text-[#718b8d]">
-                      {team.current_member_count || team.members?.length || 0}/{team.max_members} members · {team.available_spots ?? 0} open · min {team.min_members || 1}
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {(team.members || []).map((member) => (
-                        <span
-                          key={member.id}
-                          className="inline-flex items-center gap-1.5 rounded-full border border-[#77B0AA]/35 bg-white py-1 pl-1 pr-2 text-[10px] font-bold text-[#003C43]"
-                          title={formatLastSeen(member.last_seen)}
-                        >
-                          <Avatar
-                            user={member}
-                            className="h-6 w-6"
-                            rounded="rounded-full"
-                            showPresence
-                            presence={{
-                              online: resolvePresence(presence, member).online,
-                            }}
-                          />
-                          {member.name}
-                          {member.id === team.leader_id ? " · Leader" : ""}
-                        </span>
-                      ))}
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {onPreviewTeam ? (
-                        <button
-                          type="button"
-                          onClick={() => onPreviewTeam(team.id)}
-                          className="rounded-lg bg-[#E3FEF7] px-3 py-1.5 text-[10px] font-bold text-[#135D66] transition hover:bg-[#77B0AA] hover:text-[#003C43]"
-                        >
-                          View team
-                        </button>
-                      ) : null}
-                      {onLeaveTeam ? (
-                        <button
-                          type="button"
-                          onClick={() => onLeaveTeam(team.id)}
-                          className="rounded-lg border border-[#dc2626]/30 px-3 py-1.5 text-[10px] font-bold text-[#dc2626] transition hover:bg-[#fee2e2]"
-                        >
-                          Leave team
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : (
-                  <p className="mt-1 text-xs text-[#718b8d]">No team yet for this project.</p>
-                )}
-              </div>
-            ) : null}
-          </section>
-
           <section className="theme-surface rounded-2xl bg-white p-6 shadow-[0_8px_30px_rgba(0,60,67,0.06)]">
             <SkillManager
               skills={profile.skills || []}
@@ -640,6 +453,89 @@ function ProfilePage({ profile, presence, onChanged, onPreviewTeam, onLeaveTeam 
         </div>
       </div>
     </div>
+  )
+}
+
+function AcademicContextSection({ student, presence, onPreviewTeam, onLeaveTeam }) {
+  const team = student?.team || student?.current_project?.team || null
+
+  return (
+    <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
+      <h2 className="text-lg font-bold text-[#003C43]">Academic context</h2>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {(student?.courses || []).map((course) => (
+          <span
+            key={course.id}
+            className="rounded-xl bg-[#E3FEF7] px-2.5 py-1.5 text-[11px] font-bold text-[#135D66]"
+          >
+            {course.name}
+          </span>
+        ))}
+        {(student?.courses || []).length === 0 ? (
+          <span className="text-xs text-[#718b8d]">No courses enrolled yet.</span>
+        ) : null}
+      </div>
+
+      {student?.current_project ? (
+        <div className="mt-4 rounded-2xl border border-[#003C43]/8 bg-[#f5faf9] p-4">
+          <div className="text-[10px] font-bold uppercase tracking-wide text-[#77B0AA]">
+            Current project
+          </div>
+          <div className="mt-1 text-sm font-extrabold text-[#003C43]">
+            {student.current_project.title}
+          </div>
+          {team ? (
+            <div className="mt-3">
+              <div className="text-[11px] font-bold text-[#135D66]">
+                {team.name} · {team.status?.replaceAll("_", " ")}
+              </div>
+              <div className="mt-1 text-[11px] text-[#718b8d]">
+                {team.current_member_count || team.members?.length || 0}/{team.max_members} members · {team.available_spots ?? 0} open · min {team.min_members || 1}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {(team.members || []).map((member) => (
+                  <span
+                    key={member.id}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-[#77B0AA]/35 bg-white py-1 pl-1 pr-2 text-[10px] font-bold text-[#003C43]"
+                    title={formatLastSeen(member.last_seen)}
+                  >
+                    <Avatar
+                      user={member}
+                      className="h-6 w-6"
+                      rounded="rounded-full"
+                      showPresence
+                      presence={{
+                        online: resolvePresence(presence, member).online,
+                      }}
+                    />
+                    {member.name}
+                    {member.id === team.leader_id ? " · Leader" : ""}
+                  </span>
+                ))}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => onPreviewTeam(team.id)}
+                  className="rounded-lg bg-[#E3FEF7] px-3 py-1.5 text-[10px] font-bold text-[#135D66] transition hover:bg-[#77B0AA] hover:text-[#003C43]"
+                >
+                  View team
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onLeaveTeam(team.id)}
+                  className="rounded-lg border border-[#dc2626]/30 px-3 py-1.5 text-[10px] font-bold text-[#dc2626] transition hover:bg-[#fee2e2]"
+                >
+                  Leave team
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="mt-1 text-xs text-[#718b8d]">No team yet for this project.</p>
+          )}
+        </div>
+      ) : null}
+    </section>
   )
 }
 
@@ -704,6 +600,7 @@ function CourseProjectPage({
   data,
   presence,
   loading,
+  refreshing,
   error,
   message,
   teamName,
@@ -726,7 +623,10 @@ function CourseProjectPage({
   const project = data?.project || null
   const projects = Array.isArray(data?.projects) ? data.projects : project ? [project] : []
   const teams = Array.isArray(data?.teams) ? data.teams : []
-  const alreadyInTeam = teams.some((team) => team.is_member)
+  const myProjectTeam = teams.find(
+    (team) => team.is_member && (!project || team.project?.id === project.id),
+  )
+  const alreadyInTeam = Boolean(myProjectTeam)
 
   return (
     <div>
@@ -822,15 +722,15 @@ function CourseProjectPage({
           </section>
 
           <ProjectSubmission
-            teamId={teams.find((team) => team.is_member)?.id || null}
+            teamId={myProjectTeam?.id || null}
             project={project}
             onSubmitted={onSubmissionChanged}
           />
 
           <ProjectFeedbackPanel
             project={project}
-            teamId={teams.find((team) => team.is_member)?.id || null}
-            teammates={teams.find((team) => team.is_member)?.members || []}
+            teamId={myProjectTeam?.id || null}
+            teammates={myProjectTeam?.members || []}
             currentUserId={currentUserId}
           />
 
@@ -896,8 +796,8 @@ function CourseProjectPage({
                   Search and filter teams by name, project, or availability.
                 </p>
               </div>
-              <span className="rounded-full bg-[#E3FEF7] px-2.5 py-1 text-[10px] font-bold text-[#135D66]">
-                {teams.length} {teams.length === 1 ? "team" : "teams"}
+              <span className="rounded-full bg-[#E3FEF7] px-2.5 py-1 text-[10px] font-bold text-[#135D66]" aria-live="polite">
+                {refreshing ? "Updating teams..." : `${teams.length} ${teams.length === 1 ? "team" : "teams"}`}
               </span>
             </div>
             <div className="mb-4 grid gap-3 rounded-2xl border border-[#003C43]/8 bg-white p-4 shadow-sm sm:grid-cols-3">
@@ -1053,14 +953,13 @@ function CourseProjectPage({
 function TasksPage({
   tasks,
   myTeams,
-  courses,
   loading,
   error,
   notice,
-  courseFilter,
+  assigneeFilter,
   projectFilter,
   statusFilter,
-  onCourseFilterChange,
+  onAssigneeFilterChange,
   onProjectFilterChange,
   onStatusFilterChange,
   onCreate,
@@ -1075,8 +974,23 @@ function TasksPage({
         .map((task) => [task.project.id, task.project]),
     ).values(),
   )
+  const assigneeOptions = Array.from(
+    new Map(
+      [
+        ...myTeams.flatMap((team) => team.members || []),
+        ...tasks.map((task) => task.assignee),
+      ]
+        .filter((person) => person?.id)
+        .map((person) => [person.id, person]),
+    ).values(),
+  )
   const visibleTasks = tasks.filter((task) => {
-    if (courseFilter !== "all" && String(task.course?.id) !== courseFilter) return false
+    if (assigneeFilter === "unassigned" && task.assignee_id) return false
+    if (
+      assigneeFilter !== "all"
+      && assigneeFilter !== "unassigned"
+      && String(task.assignee_id || task.assignee?.id) !== assigneeFilter
+    ) return false
     if (projectFilter !== "all" && String(task.project?.id) !== projectFilter) return false
     if (statusFilter !== "all" && task.status !== statusFilter) return false
     return true
@@ -1122,20 +1036,19 @@ function TasksPage({
       )}
 
       <div className="mt-5 grid gap-3 sm:grid-cols-3">
-        <label className="text-xs font-semibold text-[#365c60]">Course
-          <select value={courseFilter} onChange={(event) => { onCourseFilterChange(event.target.value); onProjectFilterChange("all") }} className="theme-control mt-1 w-full rounded-lg border p-2.5 text-sm">
-            <option value="all">All courses</option>
-            {(courses.length ? courses : Array.from(new Map(tasks.map((task) => [task.course?.id, task.course]).filter(([id]) => id)).values())).map((course) => (
-              <option key={course.id} value={course.id}>{course.name}</option>
+        <label className="text-xs font-semibold text-[#365c60]">Assignee
+          <select value={assigneeFilter} onChange={(event) => onAssigneeFilterChange(event.target.value)} className="theme-control mt-1 w-full rounded-lg border p-2.5 text-sm">
+            <option value="all">All assignees</option>
+            <option value="unassigned">Unassigned</option>
+            {assigneeOptions.map((person) => (
+              <option key={person.id} value={person.id}>{person.name}</option>
             ))}
           </select>
         </label>
         <label className="text-xs font-semibold text-[#365c60]">Project
           <select value={projectFilter} onChange={(event) => onProjectFilterChange(event.target.value)} className="theme-control mt-1 w-full rounded-lg border p-2.5 text-sm">
             <option value="all">All projects</option>
-            {projectOptions
-              .filter((project) => courseFilter === "all" || String(project.course?.id) === courseFilter)
-              .map((project) => <option key={project.id} value={project.id}>{project.title || `Project ${project.id}`}</option>)}
+            {projectOptions.map((project) => <option key={project.id} value={project.id}>{project.title || `Project ${project.id}`}</option>)}
           </select>
         </label>
         <label className="text-xs font-semibold text-[#365c60]">Status
@@ -1184,6 +1097,7 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
   const [selectedProjectId, setSelectedProjectId] = useState(null)
   const [projectData, setProjectData] = useState(null)
   const [projectLoading, setProjectLoading] = useState(false)
+  const [teamsRefreshing, setTeamsRefreshing] = useState(false)
   const [projectError, setProjectError] = useState("")
   const [teamName, setTeamName] = useState("")
   const [creatingTeam, setCreatingTeam] = useState(false)
@@ -1193,16 +1107,20 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
   const [loadingTasks, setLoadingTasks] = useState(false)
   const [tasksError, setTasksError] = useState("")
   const [taskNotice, setTaskNotice] = useState("")
-  const [taskCourseFilter, setTaskCourseFilter] = useState("all")
+  const [taskAssigneeFilter, setTaskAssigneeFilter] = useState("all")
   const [taskProjectFilter, setTaskProjectFilter] = useState("all")
   const [taskStatusFilter, setTaskStatusFilter] = useState("all")
   const [selectedTask, setSelectedTask] = useState(null)
   const [creatingTask, setCreatingTask] = useState(false)
   const [previewTeam, setPreviewTeam] = useState(null)
+  const [previewTeamSource, setPreviewTeamSource] = useState("overview")
   const [previewLoadingId, setPreviewLoadingId] = useState(null)
+
   const [leavingTeamId, setLeavingTeamId] = useState(null)
   const [confirmLeaveTeam, setConfirmLeaveTeam] = useState(null)
   const [teamFilters, setTeamFilters] = useState({ search: "", availability: "" })
+  const teamSearchTimer = useRef(null)
+  const teamRequestId = useRef(0)
   const realtimeStatus = useRealtimeConnection()
   const realtimeTeamIds =
     active === "Tasks"
@@ -1252,6 +1170,10 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
     localStorage.setItem("team-platform-theme", darkMode ? "dark" : "light")
   }, [darkMode])
 
+  useEffect(() => () => {
+    if (teamSearchTimer.current) clearTimeout(teamSearchTimer.current)
+  }, [])
+
   useEffect(() => {
     setPageError("")
     if (active !== "My Profile" && active !== "My Courses") return undefined
@@ -1300,8 +1222,8 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
     setJoinMessage("")
     setPageError("")
     try {
-      await joinStudentTeam(teamId)
-      setJoinMessage("You joined the team.")
+      const message = await completeTeamJoin(teamId, dashboard?.available_teams, previewTeam)
+      setJoinMessage(message)
       setPreviewTeam(null)
       const updatedDashboard = await getStudentDashboard()
       setDashboard(updatedDashboard)
@@ -1316,9 +1238,11 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
     }
   }
 
-  async function loadCourseProject(courseId, projectId = null, filters = null) {
+  async function loadCourseProject(courseId, projectId = null, filters = null, { silent = false } = {}) {
     const nextFilters = filters || teamFilters
-    setProjectLoading(true)
+    const requestId = ++teamRequestId.current
+    if (silent) setTeamsRefreshing(true)
+    else setProjectLoading(true)
     setProjectError("")
     try {
       const data = await getStudentCourseTeams(courseId, {
@@ -1326,12 +1250,16 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
         search: nextFilters.search || "",
         availability: nextFilters.availability || "",
       })
+      if (requestId !== teamRequestId.current) return
       setProjectData(data)
       if (projectId === null && data?.project?.id) setSelectedProjectId(data.project.id)
     } catch (requestError) {
-      setProjectError(requestError.message)
+      if (requestId === teamRequestId.current) setProjectError(requestError.message)
     } finally {
-      setProjectLoading(false)
+      if (requestId === teamRequestId.current) {
+        setProjectLoading(false)
+        setTeamsRefreshing(false)
+      }
     }
   }
 
@@ -1348,15 +1276,21 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
   }
 
   function handleSelectProject(projectId) {
+    if (teamSearchTimer.current) clearTimeout(teamSearchTimer.current)
     setSelectedProjectId(Number(projectId))
     setProjectMessage("")
     setTeamName("")
-    loadCourseProject(selectedCourse.id, projectId, teamFilters)
+    loadCourseProject(selectedCourse.id, projectId, teamFilters, { silent: true })
   }
 
   function handleTeamFiltersChange(nextFilters) {
     setTeamFilters(nextFilters)
-    if (selectedCourse) loadCourseProject(selectedCourse.id, selectedProjectId, nextFilters)
+    if (teamSearchTimer.current) clearTimeout(teamSearchTimer.current)
+    if (!selectedCourse) return
+    const delay = nextFilters.search !== teamFilters.search ? 250 : 0
+    teamSearchTimer.current = setTimeout(() => {
+      loadCourseProject(selectedCourse.id, selectedProjectId, nextFilters, { silent: true })
+    }, delay)
   }
 
   function handleBackToCourses() {
@@ -1397,8 +1331,8 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
     setProjectError("")
     setProjectMessage("")
     try {
-      await joinStudentTeam(teamId)
-      setProjectMessage("You joined the team.")
+      const message = await completeTeamJoin(teamId, projectData?.teams, previewTeam)
+      setProjectMessage(message)
       setPreviewTeam(null)
       await loadCourseProject(selectedCourse.id, selectedProjectId)
       const updatedDashboard = await getStudentDashboard()
@@ -1439,6 +1373,7 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
     try {
       const data = await getStudentTeamPreview(teamId)
       setPreviewTeam(data.team || data)
+      setPreviewTeamSource(active === "Course Project" ? "course" : "overview")
     } catch (requestError) {
       const msg = requestError.message || "Unable to load team preview."
       setPageError(msg)
@@ -1726,6 +1661,13 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
                   </div>
                 </section>
 
+                <AcademicContextSection
+                  student={dashboard.student}
+                  presence={presence}
+                  onPreviewTeam={handlePreviewTeam}
+                  onLeaveTeam={(teamId) => setConfirmLeaveTeam({ id: teamId })}
+                />
+
                 <div className="mt-7 grid items-stretch gap-6 lg:grid-cols-2">
                   <section className="theme-surface h-full rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] transition-colors sm:p-6">
                     <div className="mb-5 flex items-center justify-between">
@@ -1898,16 +1840,12 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
                   profile={profile}
                   presence={presence}
                   onChanged={refreshProfile}
-                  onPreviewTeam={handlePreviewTeam}
-                  onLeaveTeam={(teamId) => setConfirmLeaveTeam({ id: teamId })}
                 />
               ) : pageError ? <p className="text-xs text-[#a94646]" role="alert">{pageError}</p> : <p className="text-xs text-[#6d898b]" role="status">Loading your profile...</p>
             ) : active === "Students" ? (
               <StudentsPage presence={presence} />
             ) : active === "Team Chats" ? (
-              <TeamChatPanel currentUserId={profile?.id} />
-            ) : active === "Friends" ? (
-              <FriendsPage presence={presence} />
+              <TeamChatPanel currentUserId={profile?.id || student?.id} />
             ) : active === "My Courses" ? (
               coursePageData ? <CoursesPage courses={coursePageData} onViewProject={handleViewProject} /> : pageError ? <p className="text-xs text-[#a94646]" role="alert">{pageError}</p> : <p className="text-xs text-[#6d898b]" role="status">Loading your courses...</p>
             ) : active === "Course Project" ? (
@@ -1917,6 +1855,7 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
                   data={projectData}
                   presence={presence}
                   loading={projectLoading}
+                  refreshing={teamsRefreshing}
                   error={projectError}
                   message={projectMessage}
                   teamName={teamName}
@@ -1932,7 +1871,7 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
                   onJoinTeam={handleJoinProjectTeam}
                   onPreviewTeam={handlePreviewTeam}
                   onLeaveTeam={(teamId) => setConfirmLeaveTeam({ id: teamId })}
-                  currentUserId={profile?.id}
+                  currentUserId={profile?.id || student?.id}
                   onBack={handleBackToCourses}
                 />
               ) : (
@@ -1942,14 +1881,13 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
               <TasksPage
                 tasks={tasks}
                 myTeams={myTeams}
-                courses={courses}
                 loading={loadingTasks}
                 error={tasksError}
                 notice={taskNotice}
-                courseFilter={taskCourseFilter}
+                assigneeFilter={taskAssigneeFilter}
                 projectFilter={taskProjectFilter}
                 statusFilter={taskStatusFilter}
-                onCourseFilterChange={setTaskCourseFilter}
+                onAssigneeFilterChange={setTaskAssigneeFilter}
                 onProjectFilterChange={setTaskProjectFilter}
                 onStatusFilterChange={setTaskStatusFilter}
                 onCreate={() => { setTaskNotice(""); setCreatingTask(true) }}
@@ -1996,9 +1934,10 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
                 currentUserId={student.id}
                 onClose={() => setPreviewTeam(null)}
                 onJoin={async (teamId) => {
-                  if (selectedCourse) await handleJoinProjectTeam(teamId)
+                  if (previewTeamSource === "course") await handleJoinProjectTeam(teamId)
                   else await handleJoinTeam(teamId)
                 }}
+
                 onLeave={handleLeaveTeam}
                 onRemoveMember={handleRemoveTeamMember}
                 onTransferLeadership={handleTransferLeadership}

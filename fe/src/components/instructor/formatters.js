@@ -11,6 +11,21 @@ export function formatDate(value) {
   });
 }
 
+export function toDateTimeInput(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+export function toUtcIsoString(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
 export function formatBytes(value) {
   if (value === null || value === undefined) return "Unknown size";
   if (value < 1024) return `${value} B`;

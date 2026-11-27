@@ -624,8 +624,8 @@ def get_course_teams(student_id, course_id, project_id=None, search=None, availa
     if data is None:
         return None
 
-    project_ids = [project["id"] for project in data.get("projects", [])]
     selected_project = data["project"]
+    project_ids = [selected_project["id"]]
     if project_id is not None:
         try:
             selected_project_id = int(project_id)
@@ -825,6 +825,107 @@ def leave_team(student_id, team_id):
         "max_members": team.project.max_members_per_team,
         "available_spots": max(0, team.project.max_members_per_team - remaining),
         "meets_min_size": remaining >= team.project.min_members_per_team,
+    }
+
+
+def switch_team(student_id, team_id):
+    _lock_team_assignment(student_id)
+    target = (
+        db.session.query(Team)
+        .options(
+            joinedload(Team.project).joinedload(Project.course),
+            selectinload(Team.members).joinedload(TeamMember.student),
+        )
+        .filter(Team.id == team_id)
+        .with_for_update(of=Team)
+        .one_or_none()
+    )
+    if target is None:
+        raise LookupError("Team not found")
+
+    enrolled = CourseEnrollment.query.filter_by(
+        student_id=student_id, course_id=target.project.course_id
+    ).first()
+    if enrolled is None:
+        raise PermissionError("Student is not enrolled in this team's course")
+
+    if (target.status or "").strip().lower() in CLOSED_TEAM_STATUSES:
+        raise ValueError("Team is not accepting new members")
+    restriction = _team_restriction_reason(target)
+    if restriction:
+        raise ValueError(restriction)
+
+    if TeamMember.query.filter_by(
+        team_id=target.id, student_id=student_id
+    ).first() is not None:
+        raise ValueError("You are already a member of this team")
+
+    target_count = TeamMember.query.filter_by(team_id=target.id).count()
+    if target_count >= target.project.max_members_per_team:
+        raise ValueError("Team is full")
+
+    current = (
+        TeamMember.query.join(Team)
+        .filter(
+            TeamMember.student_id == student_id,
+            Team.project_id == target.project_id,
+            TeamMember.team_id != target.id,
+        )
+        .with_for_update(of=TeamMember)
+        .first()
+    )
+    if current is None:
+        membership = TeamMember(team_id=target.id, student_id=student_id)
+        db.session.add(membership)
+        db.session.commit()
+        count = TeamMember.query.filter_by(team_id=target.id).count()
+        return {
+            "message": "Successfully joined team",
+            "team_id": target.id,
+            "switched": False,
+            "current_member_count": count,
+            "max_members": target.project.max_members_per_team,
+        }
+
+    current_team = (
+        db.session.query(Team)
+        .options(
+            joinedload(Team.project).joinedload(Project.course),
+            selectinload(Team.members).joinedload(TeamMember.student),
+        )
+        .filter(Team.id == current.team_id)
+        .with_for_update(of=Team)
+        .one_or_none()
+    )
+    if current_team is not None:
+        current_restriction = _team_restriction_reason(current_team)
+        if current_restriction:
+            raise ValueError(current_restriction)
+
+    previous_team_id = current.team_id
+    db.session.delete(current)
+    db.session.flush()
+    if current_team is not None and current_team.leader_id == student_id:
+        remaining = (
+            TeamMember.query.options(joinedload(TeamMember.student))
+            .filter_by(team_id=previous_team_id)
+            .order_by(TeamMember.joined_at.asc(), TeamMember.student_id.asc())
+            .first()
+        )
+        current_team.leader_id = remaining.student_id if remaining else None
+
+    db.session.add(TeamMember(team_id=target.id, student_id=student_id))
+    db.session.flush()
+    db.session.commit()
+    revoke_team_access(student_id, previous_team_id)
+    count = TeamMember.query.filter_by(team_id=target.id).count()
+    return {
+        "message": "Switched team successfully",
+        "team_id": target.id,
+        "previous_team_id": previous_team_id,
+        "switched": True,
+        "current_member_count": count,
+        "max_members": target.project.max_members_per_team,
     }
 
 

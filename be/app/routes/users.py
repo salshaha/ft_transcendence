@@ -137,6 +137,8 @@ def update_me():
         )
     except (UserValidationError, UserConflictError) as exc:
         return jsonify({"message": str(exc)}), 400
+    except PermissionError as exc:
+        return jsonify({"message": str(exc)}), 403
     except SQLAlchemyError:
         db.session.rollback()
         return jsonify({"message": "Unable to update profile"}), 500

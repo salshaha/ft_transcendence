@@ -5,7 +5,12 @@ import GradeManagement from "../components/instructor/GradeManagement"
 import InstructorTeamKanban from "../components/instructor/InstructorTeamKanban"
 import PdfPreview from "../components/instructor/PdfPreview"
 import ProgressCharts from "../components/instructor/ProgressCharts"
-import { formatDate, statusTone } from "../components/instructor/formatters"
+import {
+  formatDate,
+  statusTone,
+  toDateTimeInput,
+  toUtcIsoString,
+} from "../components/instructor/formatters"
 import StudentProfileModal from "../components/instructor/StudentProfileModal"
 import SubmissionTimeline from "../components/instructor/SubmissionTimeline"
 import TaskDetailsModal from "../components/instructor/TaskDetailsModal"
@@ -745,7 +750,7 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
       description: project?.description ?? "",
       min_members_per_team: project?.min_members_per_team ?? 2,
       max_members_per_team: project?.max_members_per_team ?? 5,
-      deadline: project?.deadline ? project.deadline.slice(0, 16) : "",
+      deadline: toDateTimeInput(project?.deadline),
       requirementsName: project?.requirements?.original_name ?? "",
       requirementsFile: null,
     })
@@ -802,7 +807,7 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
       title: fields.title.trim(),
       min_members_per_team: minMembers,
       max_members_per_team: maxMembers,
-      deadline: fields.deadline || null,
+      deadline: toUtcIsoString(fields.deadline),
     }
     let savedProjectId = id
     try {
