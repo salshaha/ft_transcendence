@@ -57,18 +57,59 @@ def _build_reset_url(raw_token):
     return f"{base_url}/reset-password?{query}"
 
 
+def _invalidate_undelivered_token(token_id, correlation_id):
+    """Invalidate a newly issued token in a separate transaction after delivery failure."""
+    try:
+        failed_at = datetime.now(timezone.utc)
+        (
+            db.session.query(PasswordResetToken)
+            .filter(
+                PasswordResetToken.id == token_id,
+                PasswordResetToken.used_at.is_(None),
+            )
+            .update({PasswordResetToken.used_at: failed_at}, synchronize_session=False)
+        )
+        db.session.commit()
+        return True
+    except SQLAlchemyError as exc:
+        db.session.rollback()
+        current_app.logger.error(
+            "operation=password_reset_token_cleanup error_category=database_error correlation_id=%s exception_class=%s",
+            correlation_id,
+            type(exc).__name__,
+        )
+        return False
+
+
 def request_password_reset(email):
     """Issue a single-use password-reset token and deliver it via Resend."""
+    correlation_id = secrets.token_hex(8)
     normalized_email = normalize_email(email)
     if not normalized_email:
         raise PasswordResetValidationError("A valid email address is required")
 
     if not is_email_configured():
+        current_app.logger.error(
+            "operation=password_reset_request error_category=email_configuration_missing correlation_id=%s",
+            correlation_id,
+        )
         raise EmailConfigurationError(
             "Password reset email service is currently unavailable"
         )
 
-    user = User.query.filter_by(email=normalized_email).first()
+    try:
+        user = User.query.filter_by(email=normalized_email).first()
+    except SQLAlchemyError as exc:
+        db.session.rollback()
+        current_app.logger.error(
+            "operation=password_reset_lookup error_category=database_error correlation_id=%s exception_class=%s",
+            correlation_id,
+            type(exc).__name__,
+        )
+        raise PasswordResetStorageError(
+            "Unable to process password reset request"
+        ) from exc
+
     if user is None or not user.password_hash:
         return GENERIC_RESET_REQUEST_MESSAGE
 
@@ -79,46 +120,68 @@ def request_password_reset(email):
         5, int(current_app.config.get("PASSWORD_RESET_TOKEN_EXPIRY_MINUTES", 60))
     )
     expires_at = now + timedelta(minutes=expires_minutes)
+    first_name = user.first_name
+    recipient_email = user.email
 
+    # Persist the token before calling Resend so no DB transaction stays open
+    # across network I/O and no email can be sent for an uncommitted token.
     try:
+        locked_user = (
+            db.session.query(User)
+            .filter_by(id=user.id)
+            .with_for_update()
+            .first()
+        )
+        if locked_user is None or not locked_user.password_hash:
+            db.session.rollback()
+            return GENERIC_RESET_REQUEST_MESSAGE
+
         (
             db.session.query(PasswordResetToken)
             .filter(
-                PasswordResetToken.user_id == user.id,
+                PasswordResetToken.user_id == locked_user.id,
                 PasswordResetToken.used_at.is_(None),
             )
             .update({PasswordResetToken.used_at: now}, synchronize_session=False)
         )
         reset = PasswordResetToken(
-            user_id=user.id,
+            user_id=locked_user.id,
             token_hash=token_hash,
             expires_at=expires_at,
         )
         db.session.add(reset)
         db.session.flush()
-    except SQLAlchemyError as exc:
-        db.session.rollback()
-        current_app.logger.exception("Unable to stage password reset token")
-        raise PasswordResetStorageError("Unable to process password reset request") from exc
-
-    try:
-        send_password_reset_email(
-            to_email=user.email,
-            reset_url=_build_reset_url(raw_token),
-            first_name=user.first_name,
-            expires_minutes=expires_minutes,
-            idempotency_key=f"password-reset:{token_hash[:32]}",
-        )
-    except (EmailConfigurationError, EmailDeliveryError):
-        db.session.rollback()
-        raise
-
-    try:
+        token_id = reset.id
         db.session.commit()
     except SQLAlchemyError as exc:
         db.session.rollback()
-        current_app.logger.exception("Unable to commit password reset token")
-        raise PasswordResetStorageError("Unable to process password reset request") from exc
+        current_app.logger.error(
+            "operation=password_reset_persist error_category=database_error correlation_id=%s exception_class=%s",
+            correlation_id,
+            type(exc).__name__,
+        )
+        raise PasswordResetStorageError(
+            "Unable to process password reset request"
+        ) from exc
+
+    try:
+        send_password_reset_email(
+            to_email=recipient_email,
+            reset_url=_build_reset_url(raw_token),
+            first_name=first_name,
+            expires_minutes=expires_minutes,
+            idempotency_key=f"password-reset:{token_hash[:32]}",
+            correlation_id=correlation_id,
+        )
+    except (EmailConfigurationError, EmailDeliveryError) as exc:
+        invalidated = _invalidate_undelivered_token(token_id, correlation_id)
+        current_app.logger.error(
+            "operation=password_reset_request error_category=email_delivery_failed correlation_id=%s token_invalidated=%s exception_class=%s",
+            correlation_id,
+            invalidated,
+            type(exc).__name__,
+        )
+        return GENERIC_RESET_REQUEST_MESSAGE
 
     return GENERIC_RESET_REQUEST_MESSAGE
 
@@ -154,6 +217,7 @@ def confirm_password_reset(*, raw_token, new_password):
     if password_error:
         raise PasswordResetValidationError(password_error)
 
+    correlation_id = secrets.token_hex(8)
     token_hash = _hash_token(raw_token.strip())
     now = datetime.now(timezone.utc)
 
@@ -193,5 +257,9 @@ def confirm_password_reset(*, raw_token, new_password):
         raise
     except SQLAlchemyError as exc:
         db.session.rollback()
-        current_app.logger.exception("Unable to complete password reset")
+        current_app.logger.error(
+            "operation=password_reset_confirm error_category=database_error correlation_id=%s exception_class=%s",
+            correlation_id,
+            type(exc).__name__,
+        )
         raise PasswordResetStorageError("Unable to reset password") from exc

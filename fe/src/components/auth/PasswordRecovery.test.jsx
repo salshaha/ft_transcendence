@@ -83,9 +83,9 @@ describe("ForgotPasswordForm", () => {
     await waitFor(() => expect(requestPasswordReset).toHaveBeenCalledTimes(2));
   });
 
-  it("displays API errors and navigates back to login", async () => {
+  it("displays API errors such as unconfigured service and navigates back to login", async () => {
     requestPasswordReset.mockRejectedValueOnce(
-      new Error("Unable to send password reset email right now. Please try again later."),
+      new Error("Password reset email service is currently unavailable. Please try again later."),
     );
     const onBackToLogin = vi.fn();
 
@@ -98,7 +98,7 @@ describe("ForgotPasswordForm", () => {
 
     await waitFor(() =>
       expect(screen.getByRole("alert").textContent).toContain(
-        "Unable to send password reset email right now",
+        "Password reset email service is currently unavailable",
       ),
     );
 

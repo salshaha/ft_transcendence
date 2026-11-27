@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
 from resend.exceptions import ApplicationError, ResendError
+from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.security import check_password_hash, generate_password_hash
 
 
@@ -272,10 +273,10 @@ class PasswordRecoveryTests(unittest.TestCase):
         self.assertEqual(second_validate.status_code, 200)
         self.assertTrue(second_validate.get_json()["valid"])
 
-    def test_resend_failure_rolls_back_token_and_hides_internal_details(self):
+    def test_resend_failure_invalidates_token_hides_account_existence_and_logs_safely(self):
         resend_exc = ApplicationError(
             message="Secret Resend internal detail with key re_test_mock_key_never_logged",
-            error_type="application_error",
+            error_type="invalid Bearer re_test_mock_key_never_logged",
             code=500,
         )
 
@@ -284,38 +285,212 @@ class PasswordRecoveryTests(unittest.TestCase):
                 "app.services.email_service.resend.Emails.send",
                 side_effect=resend_exc,
             ):
+                existing_resp = self._post_json(
+                    "/api/auth/forgot-password",
+                    {"email": self.student.email},
+                    environ_base=self._next_ip_environ(),
+                )
+                missing_resp = self._post_json(
+                    "/api/auth/forgot-password",
+                    {"email": "unknown-during-outage@example.com"},
+                    environ_base=self._next_ip_environ(),
+                )
+
+        # Public responses must be identical to prevent account enumeration.
+        self.assertEqual(existing_resp.status_code, 200)
+        self.assertEqual(missing_resp.status_code, 200)
+        self.assertEqual(existing_resp.get_json(), missing_resp.get_json())
+
+        # Newly created token must be invalidated after delivery failure.
+        tokens = self.PasswordResetToken.query.filter_by(user_id=self.student.id).all()
+        self.assertEqual(len(tokens), 1)
+        self.assertIsNotNone(tokens[0].used_at)
+
+        # Internal monitoring still captures safe structured operational error logs.
+        combined_logs = "\n".join(logs.output)
+        self.assertIn("error_category=provider_error", combined_logs)
+        self.assertIn("provider_error_type=unknown", combined_logs)
+        self.assertIn("error_category=email_delivery_failed", combined_logs)
+        self.assertIn("token_invalidated=True", combined_logs)
+        self.assertNotIn("Secret Resend internal detail", combined_logs)
+        self.assertNotIn("re_test_mock_key_never_logged", combined_logs)
+
+    def test_token_is_committed_before_resend_send_and_no_transaction_is_held_open(self):
+        observed = {}
+
+        def fake_send(params, options=None):
+            raw_token = self._extract_token_from_email_params(params)
+            token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+            # Query via a separate engine connection to verify durable commit
+            # happened BEFORE the Resend network request.
+            with self.db.engine.connect() as conn:
+                row = conn.execute(
+                    self.db.text(
+                        "SELECT used_at FROM password_reset_tokens WHERE token_hash = :h"
+                    ),
+                    {"h": token_hash},
+                ).fetchone()
+            observed["committed_before_send"] = row is not None and row[0] is None
+            observed["in_session_transaction"] = self.db.session().in_transaction()
+            observed["raw_token"] = raw_token
+            return {"id": "email_tx_order"}
+
+        with patch("app.services.email_service.resend.Emails.send", side_effect=fake_send):
+            resp = self._post_json(
+                "/api/auth/forgot-password",
+                {"email": self.student.email},
+                environ_base=self._next_ip_environ(),
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIs(observed.get("committed_before_send"), True)
+        self.assertIs(observed.get("in_session_transaction"), False)
+        val_resp = self._post_json(
+            "/api/auth/reset-password/validate",
+            {"token": observed["raw_token"]},
+            environ_base=self._next_ip_environ(),
+        )
+        self.assertEqual(val_resp.status_code, 200)
+
+    def test_database_commit_failure_returns_500_and_never_sends_email(self):
+        with self.assertLogs(self.app.logger, level="ERROR") as logs:
+            with patch.object(
+                self.db.session,
+                "commit",
+                side_effect=SQLAlchemyError("simulated commit failure"),
+            ):
+                with patch("app.services.email_service.resend.Emails.send") as mock_send:
+                    resp = self._post_json(
+                        "/api/auth/forgot-password",
+                        {"email": self.student.email},
+                        environ_base=self._next_ip_environ(),
+                    )
+
+        self.assertEqual(resp.status_code, 500)
+        self.assertEqual(
+            resp.get_json(),
+            {"message": "Unable to process password reset request"},
+        )
+        mock_send.assert_not_called()
+        self.assertEqual(
+            self.PasswordResetToken.query.filter_by(user_id=self.student.id).count(),
+            0,
+        )
+        combined_logs = "\n".join(logs.output)
+        self.assertIn("error_category=database_error", combined_logs)
+
+    def test_previous_token_remains_valid_after_failed_replacement_commit(self):
+        """A commit failure during a replacement request must not invalidate
+        a previously issued, still-valid reset token."""
+        raw_old = "previous-valid-token-value-1234567890"
+        old_token = self.PasswordResetToken(
+            user_id=self.student.id,
+            token_hash=hashlib.sha256(raw_old.encode("utf-8")).hexdigest(),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
+        )
+        self.db.session.add(old_token)
+        self.db.session.commit()
+
+        # Confirm the old token is valid before the failed replacement attempt.
+        val_before = self._post_json(
+            "/api/auth/reset-password/validate",
+            {"token": raw_old},
+            environ_base=self._next_ip_environ(),
+        )
+        self.assertEqual(val_before.status_code, 200)
+        self.assertTrue(val_before.get_json()["valid"])
+
+        with patch.object(
+            self.db.session,
+            "commit",
+            side_effect=SQLAlchemyError("simulated replacement commit failure"),
+        ):
+            with patch("app.services.email_service.resend.Emails.send") as mock_send:
                 resp = self._post_json(
                     "/api/auth/forgot-password",
                     {"email": self.student.email},
                     environ_base=self._next_ip_environ(),
                 )
 
-        self.assertEqual(resp.status_code, 503)
-        body = resp.get_json()
-        self.assertNotIn("Secret Resend internal detail", body["message"])
-        self.assertNotIn("re_test_mock_key_never_logged", body["message"])
+        self.assertEqual(resp.status_code, 500)
+        mock_send.assert_not_called()
+
+        # The previously issued token must remain valid.
+        val_after = self._post_json(
+            "/api/auth/reset-password/validate",
+            {"token": raw_old},
+            environ_base=self._next_ip_environ(),
+        )
+        self.assertEqual(val_after.status_code, 200)
+        self.assertTrue(val_after.get_json()["valid"])
+
+        # No new token should have been persisted.
         self.assertEqual(
             self.PasswordResetToken.query.filter_by(user_id=self.student.id).count(),
-            0,
+            1,
         )
+
+    def test_unexpected_exception_with_secret_and_reset_url_is_never_logged(self):
+        captured_token = {}
+
+        def exploding_send(params, options=None):
+            raw_token = self._extract_token_from_email_params(params)
+            captured_token["value"] = raw_token
+            reset_url = f"https://portal.example.edu/reset-password?token={raw_token}"
+            raise RuntimeError(
+                f"Network failure calling {reset_url} with Bearer re_test_mock_key_never_logged"
+            )
+
+        with self.assertLogs(self.app.logger, level="ERROR") as logs:
+            with patch(
+                "app.services.email_service.resend.Emails.send",
+                side_effect=exploding_send,
+            ):
+                resp = self._post_json(
+                    "/api/auth/forgot-password",
+                    {"email": self.student.email},
+                    environ_base=self._next_ip_environ(),
+                )
+
+        self.assertEqual(resp.status_code, 200)
         combined_logs = "\n".join(logs.output)
+        self.assertIn("error_category=unexpected_provider_exception", combined_logs)
+        self.assertIn("exception_class=RuntimeError", combined_logs)
         self.assertNotIn("re_test_mock_key_never_logged", combined_logs)
+        self.assertNotIn(captured_token["value"], combined_logs)
+        self.assertNotIn("https://portal.example.edu/reset-password", combined_logs)
+
+        # Verify the invalidated token cannot be used to reset the password.
+        confirm_resp = self._post_json(
+            "/api/auth/reset-password",
+            {
+                "token": captured_token["value"],
+                "new_password": "ShouldNotWorkPassword123!",
+            },
+            environ_base=self._next_ip_environ(),
+        )
+        self.assertEqual(confirm_resp.status_code, 400)
 
     def test_missing_resend_configuration_fails_uniformly_without_enumeration(self):
         self.app.config["RESEND_API_KEY"] = ""
-        existing_resp = self._post_json(
-            "/api/auth/forgot-password",
-            {"email": self.student.email},
-            environ_base=self._next_ip_environ(),
-        )
-        missing_resp = self._post_json(
-            "/api/auth/forgot-password",
-            {"email": "unknown@example.com"},
-            environ_base=self._next_ip_environ(),
-        )
+        with self.assertLogs(self.app.logger, level="ERROR") as logs:
+            existing_resp = self._post_json(
+                "/api/auth/forgot-password",
+                {"email": self.student.email},
+                environ_base=self._next_ip_environ(),
+            )
+            missing_resp = self._post_json(
+                "/api/auth/forgot-password",
+                {"email": "unknown@example.com"},
+                environ_base=self._next_ip_environ(),
+            )
         self.assertEqual(existing_resp.status_code, 503)
         self.assertEqual(missing_resp.status_code, 503)
         self.assertEqual(existing_resp.get_json(), missing_resp.get_json())
+        self.assertIn(
+            "error_category=email_configuration_missing",
+            "\n".join(logs.output),
+        )
 
     def test_reset_password_full_flow_invalidates_token_and_existing_sessions(self):
         # User is already signed in on another client session before reset.

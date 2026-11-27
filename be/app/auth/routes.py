@@ -13,10 +13,7 @@ from app.services.auth_service import (
     serialize_session_user,
     start_user_session,
 )
-from app.services.email_service import (
-    EmailConfigurationError,
-    EmailDeliveryError,
-)
+from app.services.email_service import EmailConfigurationError
 from app.services.password_reset_service import (
     InvalidResetTokenError,
     PasswordResetStorageError,
@@ -304,10 +301,6 @@ def request_password_reset():
     except EmailConfigurationError:
         return jsonify({
             "message": "Password reset email service is currently unavailable. Please try again later."
-        }), 503
-    except EmailDeliveryError:
-        return jsonify({
-            "message": "Unable to send password reset email right now. Please try again later."
         }), 503
     except PasswordResetStorageError:
         return jsonify({"message": "Unable to process password reset request"}), 500

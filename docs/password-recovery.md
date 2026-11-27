@@ -128,14 +128,29 @@ Responses:
   }
   ```
 
-- `503 Service Unavailable` (email service unconfigured or Resend delivery failed;
-  internal provider error details are never exposed):
+- `503 Service Unavailable` (email service unconfigured before account lookup;
+  returned uniformly for all valid email requests without revealing account
+  existence):
 
   ```json
   {
-    "message": "Unable to send password reset email right now. Please try again later."
+    "message": "Password reset email service is currently unavailable. Please try again later."
   }
   ```
+
+- `500 Internal Server Error` (database error while looking up or persisting
+  token state; no email is dispatched):
+
+  ```json
+  {
+    "message": "Unable to process password reset request"
+  }
+  ```
+
+> **Note:** When Resend delivery fails at runtime for an existing account, the
+> backend invalidates the newly created token in a separate transaction, logs a
+> structured operational error without sensitive details, and still returns the
+> identical `200 OK` response above so attackers cannot enumerate accounts.
 
 ### Validate Reset Token
 
@@ -196,10 +211,19 @@ Responses:
   conditional `UPDATE ... WHERE token_hash = :hash AND used_at IS NULL AND expires_at > :now`
   inside the database transaction alongside password update and `session_version`
   increment. If any step fails, the transaction rolls back cleanly.
-- **Superseding prior tokens**: Requesting a new reset token invalidates any
-  previous unused tokens for that user once email delivery succeeds.
-- **Anti-enumeration**: Registered, nonexistent, and passwordless Microsoft SSO
-  accounts receive the exact same HTTP `200` response body.
+- **Commit-then-send ordering**: The token row is committed (and prior unused
+  tokens for that user invalidated) before calling Resend so no DB transaction
+  is held open during network I/O and no email can be sent for an uncommitted
+  token. If Resend delivery fails, a separate transaction immediately
+  invalidates the newly created token.
+- **Anti-enumeration**: Registered, nonexistent, passwordless Microsoft SSO
+  accounts, and runtime Resend delivery failures all receive the exact same
+  HTTP `200` response body. Missing Resend configuration fails before account
+  lookup with an identical `503` response for all requests.
+- **Safe structured logging**: Operational failures log only sanitized metadata
+  (`operation`, `error_category`, `correlation_id`, safe provider code/type, or
+  exception class name). Credentials, API keys, passwords, raw tokens, and
+  reset URLs are never logged.
 - **Session invalidation**: `users.session_version` is incremented on reset so
   existing cookie sessions across all devices fail verification on their next
   authenticated request, and the resetting browser's session is cleared if active.
@@ -235,6 +259,6 @@ flask --app run.py db downgrade -1
 | Symptom / Status | Likely Cause | Resolution |
 | --- | --- | --- |
 | `503` — `Password reset email service is currently unavailable` | `RESEND_API_KEY` or `EMAIL_FROM` is empty or missing from Vault/environment. | Configure both variables and restart Flask. |
-| `503` — `Unable to send password reset email right now` and Resend 401/403 in server logs | Invalid `RESEND_API_KEY`, unverified sending domain, or using `onboarding@resend.dev` to send to an unverified recipient email. | Verify the API key in Resend, verify your sending domain DNS records, or test with your Resend account's email when using `onboarding@resend.dev`. |
+| `200` (with `error_category=provider_error` / `email_delivery_failed` in server logs) | Invalid `RESEND_API_KEY`, unverified sending domain, or using `onboarding@resend.dev` to send to an unverified recipient email. | Inspect server logs for `provider_code` / `provider_error_type`, verify the API key and sending domain DNS records in Resend, or test with your Resend account's email when using `onboarding@resend.dev`. |
 | `429` — `Too many requests` | Client exceeded `PASSWORD_RESET_REQUEST_LIMIT` or `PASSWORD_RESET_CONFIRM_LIMIT`. | Wait for the rate-limit window to reset or configure `RATE_LIMIT_STORAGE_URI` with Redis in multi-worker production. |
 | `400` — `Invalid or expired reset token` | Link expired (> 60 minutes), token was already used, or a newer reset request superseded it. | Request a fresh password reset link from `/forgot-password`. |
