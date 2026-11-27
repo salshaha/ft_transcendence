@@ -604,6 +604,7 @@ function CourseProjectPage({
   error,
   message,
   teamName,
+  teamNameError,
   creatingTeam,
   joiningTeam,
   leavingTeam,
@@ -671,6 +672,9 @@ function CourseProjectPage({
                     Instructor: {data.course.instructor.name}
                   </div>
                 ) : null}
+                <div className="mt-3 text-xs font-semibold text-[#365c60]">
+                  Project status: <span className="rounded-full bg-[#E3FEF7] px-2 py-1 text-[10px] font-bold uppercase text-[#135D66]">{String(project.project_status || "todo").replaceAll("_", " ")}</span>
+                </div>
               </div>
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="theme-soft rounded-xl bg-[#f0f7f6] p-3">
@@ -770,13 +774,18 @@ function CourseProjectPage({
               </p>
             ) : (
               <form onSubmit={onCreateTeam} className="mt-3 flex flex-col gap-3 sm:flex-row">
-                <input
-                  value={teamName}
-                  onChange={(event) => onTeamNameChange(event.target.value)}
-                  placeholder="Team name"
-                  aria-label="Team name"
-                  className="theme-control flex-1 rounded-xl border border-[#003C43]/10 bg-white px-4 py-2.5 text-sm text-[#003C43] outline-none transition focus:border-[#135D66] focus:ring-4 focus:ring-[#135D66]/10"
-                />
+                <div className="flex-1">
+                  <input
+                    value={teamName}
+                    onChange={(event) => onTeamNameChange(event.target.value)}
+                    placeholder="Team name"
+                    aria-label="Team name"
+                    aria-invalid={Boolean(teamNameError)}
+                    aria-describedby={teamNameError ? "team-name-error" : undefined}
+                    className="theme-control w-full rounded-xl border border-[#003C43]/10 bg-white px-4 py-2.5 text-sm text-[#003C43] outline-none transition focus:border-[#135D66] focus:ring-4 focus:ring-[#135D66]/10"
+                  />
+                  {teamNameError && <p id="team-name-error" className="mt-2 text-xs text-[#a94646]" role="alert">{teamNameError}</p>}
+                </div>
                 <button
                   type="submit"
                   disabled={creatingTeam}
@@ -1099,6 +1108,7 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
   const [teamsRefreshing, setTeamsRefreshing] = useState(false)
   const [projectError, setProjectError] = useState("")
   const [teamName, setTeamName] = useState("")
+  const [teamNameError, setTeamNameError] = useState("")
   const [creatingTeam, setCreatingTeam] = useState(false)
   const [projectMessage, setProjectMessage] = useState("")
   const [tasks, setTasks] = useState([])
@@ -1269,6 +1279,7 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
     setProjectError("")
     setProjectMessage("")
     setTeamName("")
+    setTeamNameError("")
     setTeamFilters({ search: "", availability: "" })
     setActive("Course Project")
     loadCourseProject(course.id, null, { search: "", availability: "" })
@@ -1279,6 +1290,7 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
     setSelectedProjectId(Number(projectId))
     setProjectMessage("")
     setTeamName("")
+    setTeamNameError("")
     loadCourseProject(selectedCourse.id, projectId, teamFilters, { silent: true })
   }
 
@@ -1301,16 +1313,28 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
     setActive("My Courses")
   }
 
+  function handleTeamNameChange(value) {
+    setTeamName(value)
+    if (teamNameError) setTeamNameError("")
+    if (projectError) setProjectError("")
+  }
+
   async function handleCreateTeam(event) {
     event.preventDefault()
     if (!projectData?.project) return
+    const name = teamName.trim()
     setProjectError("")
     setProjectMessage("")
+    if (!name) {
+      setTeamNameError("Team name is required.")
+      return
+    }
+    setTeamNameError("")
     setCreatingTeam(true)
     try {
       const result = await createStudentTeam({
         projectId: projectData.project.id,
-        name: teamName.trim() || `Team ${Date.now()}`,
+        name,
       })
       const createdTeam = result.team || result
       setTeamName("")
@@ -1323,6 +1347,15 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
     } finally {
       setCreatingTeam(false)
     }
+  }
+
+  async function handleSubmissionChanged() {
+    if (!selectedCourse) return
+    await loadCourseProject(selectedCourse.id, selectedProjectId, teamFilters, { silent: true })
+    try {
+      const updatedDashboard = await getStudentDashboard()
+      setDashboard(updatedDashboard)
+    } catch {}
   }
 
   async function handleJoinProjectTeam(teamId) {
@@ -1838,6 +1871,7 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
                   error={projectError}
                   message={projectMessage}
                   teamName={teamName}
+                  teamNameError={teamNameError}
                   creatingTeam={creatingTeam}
                   joiningTeam={joiningTeam}
                   leavingTeam={leavingTeamId}
@@ -1845,12 +1879,13 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
                   teamFilters={teamFilters}
                   onTeamFiltersChange={handleTeamFiltersChange}
                   onSelectProject={handleSelectProject}
-                  onTeamNameChange={setTeamName}
+                  onTeamNameChange={handleTeamNameChange}
                   onCreateTeam={handleCreateTeam}
                   onJoinTeam={handleJoinProjectTeam}
                   onPreviewTeam={handlePreviewTeam}
                   onLeaveTeam={(teamId) => setConfirmLeaveTeam({ id: teamId })}
                   currentUserId={profile?.id || student?.id}
+                  onSubmissionChanged={handleSubmissionChanged}
                   onBack={handleBackToCourses}
                 />
               ) : (

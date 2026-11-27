@@ -275,6 +275,33 @@ class InstructorTeamKanbanTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
 
+    def test_instructor_can_update_task_status_only(self):
+        self.login(self.student_id)
+        created = self.post("/api/tasks", {"team_id": self.team_id, "title": "Status target"})
+        self.assertEqual(created.status_code, 201)
+        task_id = created.get_json()["id"]
+
+        self.login(self.instructor_id)
+        response = self.client.put(
+            f"/api/tasks/{task_id}",
+            json={"status": "done"},
+            headers={"X-CSRF-Token": CSRF_TOKEN},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["status"], "done")
+        with self.app.app_context():
+            self.assertEqual(db.session.get(Task, task_id).status, "done")
+
+        forbidden = self.client.put(
+            f"/api/tasks/{task_id}",
+            json={"status": "todo", "title": "Still not allowed"},
+            headers={"X-CSRF-Token": CSRF_TOKEN},
+        )
+        self.assertEqual(forbidden.status_code, 403)
+
+        self.login(self.student_id)
+        self.client.delete(f"/api/tasks/{task_id}", headers={"X-CSRF-Token": CSRF_TOKEN})
+
     def test_students_can_still_manage_their_team_tasks(self):
         self.login(self.student_id)
         response = self.post("/api/tasks", {"team_id": self.team_id, "title": "Student task"})

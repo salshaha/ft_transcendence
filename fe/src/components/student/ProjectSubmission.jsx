@@ -101,7 +101,7 @@ export default function ProjectSubmission({ teamId, project, onSubmitted }) {
     setError("");
     setMessage("");
     try {
-      const data = await submitTeamProject(teamId, file, setProgress);
+      const data = await studentService.submitTeamProject(teamId, file, setProgress);
       setSubmission(data.submission || null);
       setFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -118,7 +118,7 @@ export default function ProjectSubmission({ teamId, project, onSubmitted }) {
     if (!teamId) return;
     setError("");
     try {
-      const { blob } = await fetchTeamSubmissionFile(teamId, download);
+      const { blob } = await studentService.fetchTeamSubmissionFile(teamId, download);
       if (download) {
         saveFileBlob(blob, submission?.file?.original_name || "submission");
         return;

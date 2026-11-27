@@ -17,7 +17,7 @@ import {
   uploadTaskAttachment,
 } from "../../services/taskService"
 
-export default function TaskDetailsModal({ task, onClose, onTaskUpdated, onTaskDeleted, canManage = false, viewerRole = "", currentUserId = null }) {
+export default function TaskDetailsModal({ task, onClose, onTaskUpdated, onTaskDeleted, canManage = false, canUpdateStatus = false, viewerRole = "", currentUserId = null }) {
   const [currentTask, setCurrentTask] = useState(task)
   const [comments, setComments] = useState([])
   const [attachments, setAttachments] = useState([])
@@ -82,6 +82,20 @@ export default function TaskDetailsModal({ task, onClose, onTaskUpdated, onTaskD
         assignee_id: assigneeId === "" ? null : Number(assigneeId),
         due_date: dueDate || null,
       })
+      setCurrentTask(updated)
+      onTaskUpdated?.(updated)
+    } catch (requestError) {
+      setError(requestError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function saveStatusOnly() {
+    setBusy(true)
+    setError("")
+    try {
+      const updated = await updateTask(task.id, { status })
       setCurrentTask(updated)
       onTaskUpdated?.(updated)
     } catch (requestError) {
@@ -297,7 +311,27 @@ export default function TaskDetailsModal({ task, onClose, onTaskUpdated, onTaskD
       ) : (
         <section className="theme-soft mt-6 rounded-2xl border border-[#003C43]/8 p-4">
           <h3 className="text-sm font-bold text-[#003C43]">Task details</h3>
-          <p className="mt-2 text-xs leading-6 text-[#587376]">Instructors have read-only access to team tasks. Use the feedback section below to give guidance.</p>
+          {canUpdateStatus ? (
+            <>
+              <p className="mt-2 text-xs leading-6 text-[#587376]">Update the task status for this team. Other task details stay read-only.</p>
+              <div className="mt-3 flex flex-wrap items-end gap-2">
+                <label className="text-xs font-semibold text-[#365c60]">
+                  Status
+                  <select value={status} onChange={(event) => setStatus(event.target.value)} className="theme-control mt-1 rounded-lg border p-2 text-sm">
+                    <option value="todo">To do</option>
+                    <option value="in_progress">In progress</option>
+                    <option value="review">Review</option>
+                    <option value="done">Done</option>
+                  </select>
+                </label>
+                <button type="button" disabled={busy || status === currentTask.status} onClick={saveStatusOnly} className="rounded-lg bg-[#135D66] px-4 py-2 text-xs font-bold text-white disabled:opacity-60">
+                  {busy ? "Saving…" : "Update status"}
+                </button>
+              </div>
+            </>
+          ) : (
+            <p className="mt-2 text-xs leading-6 text-[#587376]">Instructors have read-only access to team tasks. Use the feedback section below to give guidance.</p>
+          )}
         </section>
       )}
 

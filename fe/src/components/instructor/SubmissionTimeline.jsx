@@ -1,6 +1,6 @@
 import { formatBytes, formatDate, statusTone } from "./formatters"
 
-export default function SubmissionTimeline({ submissions, onView, onDownload, onOpen }) {
+export default function SubmissionTimeline({ submissions, onView, onDownload, onOpen, renderGradeEditor }) {
   return (
     <div className="relative space-y-4 pl-6">
       <div className="absolute bottom-2 left-[9px] top-2 w-px bg-[#003C43]/12" aria-hidden="true" />
@@ -39,6 +39,7 @@ export default function SubmissionTimeline({ submissions, onView, onDownload, on
               </button>
             </div>
           </div>
+          {renderGradeEditor?.(submission)}
         </article>
       ))}
       {submissions.length === 0 && (

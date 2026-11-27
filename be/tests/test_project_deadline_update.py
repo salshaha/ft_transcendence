@@ -111,12 +111,64 @@ class ProjectDeadlineUpdateTests(unittest.TestCase):
             expected,
         )
 
+    def test_project_status_update_persists_and_is_visible_to_student(self):
+        self.login(self.instructor_id)
+        response = self.request(
+            "put",
+            f"/api/instructor/projects/{self.project_id}",
+            {"status": "done"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["project"]["status"], "done")
+        self.assertEqual(
+            self.db.session.get(self.Project, self.project_id).status, "done"
+        )
+
+        invalid = self.request(
+            "put",
+            f"/api/instructor/projects/{self.project_id}",
+            {"status": "finished"},
+        )
+        self.assertEqual(invalid.status_code, 400)
+
+        self.login(self.student_id)
+        student_response = self.client.get(
+            f"/api/student/courses/{self.course_id}/project"
+        )
+        self.assertEqual(student_response.status_code, 200)
+        self.assertEqual(student_response.get_json()["project"]["project_status"], "done")
+
+        self.login(self.instructor_id)
+        self.request(
+            "put",
+            f"/api/instructor/projects/{self.project_id}",
+            {"status": "in_progress"},
+        )
+
     @staticmethod
     def _as_utc(value):
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)
         return parsed.astimezone(timezone.utc)
+
+    def test_team_name_is_required_and_not_defaulted(self):
+        self.login(self.student_id)
+        missing = self.request(
+            "post",
+            "/api/student/teams",
+            {"project_id": self.project_id, "name": "   "},
+        )
+        self.assertEqual(missing.status_code, 400)
+        self.assertIn("Team name is required", missing.get_json()["message"])
+
+        created = self.request(
+            "post",
+            "/api/student/teams",
+            {"project_id": self.project_id, "name": "Named Team"},
+        )
+        self.assertEqual(created.status_code, 201, created.get_data(as_text=True))
+        self.assertEqual(created.get_json()["team"]["name"], "Named Team")
 
     def test_student_cannot_update_deadline(self):
         self.login(self.student_id)

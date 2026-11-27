@@ -149,7 +149,11 @@ class GradingTests(unittest.TestCase):
         self.login(self.student_id)
         student_response = self.client.get("/api/student/grades")
         self.assertEqual(student_response.status_code, 200)
-        self.assertEqual(student_response.get_json()["grades"], [])
+        hidden_grades = student_response.get_json()["grades"]
+        self.assertEqual(len(hidden_grades), 1)
+        self.assertFalse(hidden_grades[0]["published"])
+        self.assertIsNone(hidden_grades[0]["grade"])
+        self.assertIsNone(hidden_grades[0]["feedback"])
 
         self.login(self.instructor_id)
         publish_response = self.put(
@@ -183,7 +187,10 @@ class GradingTests(unittest.TestCase):
         self.assertEqual(len(history_response.get_json()["audits"]), 2)
 
         self.login(self.student_id)
-        self.assertEqual(self.client.get("/api/student/grades").get_json()["grades"], [])
+        hidden_again = self.client.get("/api/student/grades").get_json()["grades"]
+        self.assertEqual(len(hidden_again), 1)
+        self.assertFalse(hidden_again[0]["published"])
+        self.assertIsNone(hidden_again[0]["grade"])
 
     def test_grade_validation_and_enrollment(self):
         self.login(self.instructor_id)
