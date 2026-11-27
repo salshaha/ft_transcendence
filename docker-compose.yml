@@ -7,11 +7,20 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
 
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./sql/sql-schema.sql:/docker-entrypoint-initdb.d/init.sql
+      - type: bind
+        source: ./vault/credentials/postgres-password
+        target: /run/secrets/postgres_password
+        read_only: true
+        bind:
+          create_host_path: false
+
+    networks:
+      - backend_database
 
   backend:
     build:
@@ -21,18 +30,38 @@ services:
     container_name: team-platform-backend
     restart: unless-stopped
 
-    env_file:
-      - .env
-
     environment:
+      VAULT_AGENT_ADDR: http://vault-agent:8100
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       FRONTEND_ORIGIN: ${WAF_PUBLIC_ORIGIN:-http://localhost:8080}
       FRONTEND_ORIGINS: ${WAF_PUBLIC_ORIGIN:-http://localhost:8080}
       MICROSOFT_REDIRECT_URI: ${WAF_PUBLIC_ORIGIN:-http://localhost:8080}/auth/microsoft/callback
+      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-organizations}
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      SESSION_LIFETIME_DAYS: ${SESSION_LIFETIME_DAYS:-14}
+      RATE_LIMIT_STORAGE_URI: ${RATE_LIMIT_STORAGE_URI:-memory://}
+      API_RATE_LIMIT: ${API_RATE_LIMIT:-300 per hour}
+      API_GLOBAL_RATE_LIMIT: ${API_GLOBAL_RATE_LIMIT:-1200 per hour}
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+      MAX_CONTENT_LENGTH_BYTES: ${MAX_CONTENT_LENGTH_BYTES:-115343360}
+      STORAGE_MAX_AVATAR_BYTES: ${STORAGE_MAX_AVATAR_BYTES:-5242880}
+      STORAGE_MAX_PROJECT_REQUIREMENTS_BYTES: ${STORAGE_MAX_PROJECT_REQUIREMENTS_BYTES:-20971520}
+      STORAGE_MAX_TASK_ATTACHMENT_BYTES: ${STORAGE_MAX_TASK_ATTACHMENT_BYTES:-26214400}
+      STORAGE_MAX_PROJECT_SUBMISSION_BYTES: ${STORAGE_MAX_PROJECT_SUBMISSION_BYTES:-104857600}
 
     depends_on:
-      - postgres
+      postgres:
+        condition: service_started
+      vault-agent:
+        condition: service_healthy
+
+    networks:
+      - backend_ingress
+      - backend_database
+      - backend_vault
+      - backend_egress
 
   frontend:
     build:
@@ -48,13 +77,16 @@ services:
     environment:
       NODE_ENV: development
 
+    networks:
+      - frontend_ingress
+
   waf:
     image: owasp/modsecurity-crs:4.25.2-nginx-202611190211-lts@sha256:98d448750b86f5f94ca570590dd1461e3ab24efc97e7c41b271a55ac33b331fe
     container_name: team-platform-waf
     restart: unless-stopped
 
     ports:
-      - "${WAF_HTTP_PORT:-8080}:8080"
+      - "${WAF_BIND_ADDRESS:-127.0.0.1}:${WAF_HTTP_PORT:-8080}:8080"
 
     env_file:
       - ./waf/modsecurity.env
@@ -89,6 +121,83 @@ services:
       - backend
       - frontend
 
+    networks:
+      - frontend_ingress
+      - backend_ingress
+
+  vault:
+    image: hashicorp/vault:2.2.2
+    container_name: team-platform-vault
+    restart: unless-stopped
+
+    command: ["server", "-config=/vault/config/vault.hcl"]
+    cap_add:
+      - IPC_LOCK
+    security_opt:
+      - no-new-privileges:true
+
+    volumes:
+      - vault_data:/vault/file
+      - ./vault/vault.hcl:/vault/config/vault.hcl:ro
+
+    networks:
+      - vault_private
+
+  vault-agent:
+    image: hashicorp/vault:2.2.2
+    container_name: team-platform-vault-agent
+    restart: unless-stopped
+
+    user: "${VAULT_AGENT_UID:-1000}:${VAULT_AGENT_GID:-1000}"
+    command: ["agent", "-config=/vault/config/agent.hcl"]
+    security_opt:
+      - no-new-privileges:true
+
+    volumes:
+      - type: bind
+        source: ./vault/agent.hcl
+        target: /vault/config/agent.hcl
+        read_only: true
+      - type: bind
+        source: ./vault/credentials/backend-role-id
+        target: /vault/credentials/backend-role-id
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./vault/credentials/backend-secret-id
+        target: /vault/credentials/backend-secret-id
+        read_only: true
+        bind:
+          create_host_path: false
+
+    depends_on:
+      - vault
+
+    networks:
+      - backend_vault
+      - vault_private
+
+    healthcheck:
+      test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8100"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
 
 volumes:
   postgres_data:
+  vault_data:
+
+networks:
+  vault_private:
+    internal: true
+  backend_vault:
+    internal: true
+  backend_database:
+    internal: true
+  backend_ingress:
+    internal: true
+  frontend_ingress:
+    internal: true
+  backend_egress:

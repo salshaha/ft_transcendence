@@ -27,8 +27,16 @@ current origin, so API requests use the same WAF endpoint as the page and keep
 their existing `/api/...` paths and credential behavior. Credentialed backend
 CORS is restricted to the exact `WAF_PUBLIC_ORIGIN`; same-origin browser
 requests do not rely on CORS. Only the WAF publishes a host port (`8080` by
-default). Flask, Vite, and PostgreSQL remain in Compose and are not published
-to the host.
+default), bound to `127.0.0.1` unless `WAF_BIND_ADDRESS` is overridden. This
+keeps the HTTP-only local lab listener off external interfaces by default.
+Flask, Vite, and PostgreSQL remain in Compose and are not published to the host.
+Compose places Vite and the WAF on a frontend ingress network;
+the WAF and Flask share a separate backend ingress network; PostgreSQL is
+reachable only on a dedicated backend/database network. Vault and Vault Agent
+use their own internal networks, while only Flask receives a separate
+outbound-capable network for external identity/API calls. This limits
+service-to-service reachability but does not prevent host-root or Docker-daemon
+administrators from accessing containers.
 
 The WAF applies a 110 MiB request-body limit, matching Flask's configured
 maximum. Non-file bodies are limited to 1 MiB, and the ModSecurity argument
@@ -169,8 +177,11 @@ docker inspect --format '{{json .NetworkSettings.Ports}}' team-platform-backend 
 ## Deployment notes
 
 This Compose setup is for local HTTP development and must not be exposed
-directly to the Internet. Before public deployment, configure a trusted TLS
-listener at the WAF, set `SESSION_COOKIE_SECURE=true`, and register the HTTPS
+directly to the Internet. The default loopback binding prevents remote clients
+from reaching its HTTP listener. Do not override `WAF_BIND_ADDRESS` to a
+non-loopback interface unless a trusted TLS-terminating ingress protects
+external traffic. Before public deployment, configure TLS at the WAF or a
+trusted upstream, set `SESSION_COOKIE_SECURE=true`, and register the HTTPS
 Microsoft callback.
 Do not publish Flask, Vite, or PostgreSQL ports as an alternate ingress path.
 Review audit records for false positives while retaining blocking mode; add

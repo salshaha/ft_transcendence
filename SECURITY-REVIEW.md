@@ -20,12 +20,35 @@ credential directory was absent. Consequently, Vault initialization,
 unsealing, policy enforcement, WAF blocking, audit output, backend/PostgreSQL
 connectivity, and restart persistence could not be exercised.
 
-The highest-priority finding is the fixed Flask signing-key fallback used
-outside the Vault-configured Compose path. Since Flask's signed session is
-used to identify authenticated users, a reachable instance using that fallback
-can accept forged sessions. There is also no network segmentation between
-several default-network services, so a compromised Compose peer can contact
-the backend or database without traversing the WAF.
+The initial review found a fixed Flask signing-key fallback and missing
+network segmentation. The remediation follow-up below records the current
+working-tree state; runtime Compose isolation and the complete Vault/WAF
+integration still require live validation.
+
+The final review additionally identified that the HTTP-only WAF port was
+published on all host interfaces by default while secure session cookies
+defaulted off. The host binding now defaults to loopback; remote access still
+requires a trusted TLS-terminating ingress.
+
+### Remediation follow-up
+
+After the review, the three findings below were addressed in the working tree:
+
+- Flask now fails closed if a strong `SECRET_KEY` is not present outside Vault;
+  the test suite uses a test-only key.
+- Compose now separates frontend ingress, WAF-to-backend ingress, backend to
+  PostgreSQL, backend to Vault Agent, Vault server, and backend outbound
+  networking. Only the backend is attached to the outbound network.
+- `be/.dockerignore` excludes environment files, credential/secret directories,
+  private keys/certificates, local databases, uploads, tests, and local Python
+  environments from the backend image build context.
+- The WAF host port now binds to `127.0.0.1` by default, preventing direct
+  unencrypted access from remote interfaces. Non-loopback binding is documented
+  as requiring a trusted TLS-terminating ingress.
+
+The new key-validation test, rendered Compose checks, and frontend tests pass.
+Runtime isolation and build-context behavior remain dependent on Docker
+execution.
 
 ## Requirement assessment
 
@@ -35,7 +58,7 @@ the backend or database without traversing the WAF.
 | ModSecurity blocking and CRS | Configured; not verified live | `waf/modsecurity.env` sets `MODSEC_RULE_ENGINE=On`, request-body inspection, CRS paranoia and anomaly thresholds. Compose pins the OWASP CRS image. No active container was available to confirm runtime configuration or rule loading. |
 | SQL injection and XSS detection | Configured by the pinned CRS image/default rule families; probes not rerun | `docs/waf.md` identifies CRS SQLi (942) and XSS (941) families and records previous local probe outcomes. This review could not independently reproduce them. |
 | Request inspection and audit logging | Configured; not verified live | Request-body inspection is enabled. Relevant ModSecurity audit events are directed to stdout with matched-rule parts. The configured audit parts intentionally omit request/response bodies and headers. |
-| No externally published backend bypass | Implemented in Compose; static port check passed | Rendered Compose publishes only WAF port 8080. Flask, frontend, PostgreSQL, Vault, and Vault Agent have no published host ports. Internal Compose peers can still bypass the WAF; see findings. |
+| No externally published backend bypass | Implemented in Compose; static port and network checks passed | Rendered Compose publishes only WAF port 8080, bound to loopback by default. Flask, frontend, PostgreSQL, Vault, and Vault Agent have no published host ports. Flask shares its backend-ingress network with the WAF; runtime isolation has not been exercised. |
 | Persistent Vault storage | Configured; persistence not tested | Compose declares `vault_data` mounted at `/vault/file`; there was no target Vault volume/container to restart. |
 | KV v2 and AppRole | Setup documented and client wiring present; live Vault state not verified | README documents CLI commands to enable KV v2/AppRole and create the role and policy. These operations are not automatically provisioned by Compose. The Vault data store was absent. |
 | Restrictive backend policy | Implemented as a policy file; enforcement not tested | `vault/policies/backend.hcl` grants `read` on `secret/data/ft-transcendence/backend` and `update` on `auth/token/renew-self`. |
@@ -86,9 +109,10 @@ evidence was produced in this review.
 
 | # | Severity | File | Lines | Vulnerability | Confidence |
 |---|----------|------|-------|---------------|------------|
-| 1 | 🟠 HIGH | [be/app/config.py](be/app/config.py#L88) | 88–91 | When Vault is not configured and no explicit `SECRET_KEY` is supplied, Flask falls back to a fixed development signing key. Flask uses signed session data for `user_id` ([auth_service.py](be/app/services/auth_service.py#L14)); the standalone runner binds to `0.0.0.0` ([run.py](be/run.py#L11)). A reachable non-Compose instance using the fallback may accept forged sessions. | 9/10 |
-| 2 | 🟡 MEDIUM | [docker-compose.yml](docker-compose.yml#L22) | 22–81, 181–183 | Backend, frontend, WAF, and PostgreSQL share Compose's default network. A compromised peer container on that network can contact Flask/PostgreSQL directly and bypass the WAF. This is an internal lateral-access path, not a published host/Internet bypass. | 9/10 |
-| 3 | ⚪ LOW | [be/Dockerfile](be/Dockerfile#L16) | 16 | `COPY . .` copies the backend build context and no backend `.dockerignore` is present. If a developer puts local credentials or private data inside `be/`, those files can be baked into an image. No such tracked credential was found; this is a build-context exposure risk. | 8/10 |
+| 1 | 🟠 HIGH — mitigated by default loopback binding; runtime not tested | [docker-compose.yml](docker-compose.yml#L89) | 42, 88–89 in final review | HTTP-only WAF was published on all host interfaces and secure session cookies defaulted off. WAF now binds to `127.0.0.1` by default; remote access requires trusted TLS termination. | 8/10 |
+| 2 | 🟠 HIGH — remediated and tested | [be/app/config.py](be/app/config.py#L88) | 88–91 in review baseline | Fixed fallback signing key could permit forged sessions when running outside Vault. Config now requires an explicit key of at least 32 characters in that mode. | 9/10 |
+| 3 | 🟡 MEDIUM — remediated; static checks passed | [docker-compose.yml](docker-compose.yml#L22) | 22–81, 181–183 in review baseline | Shared default network permitted service-to-service WAF bypass. Services now use segmented networks; Docker runtime isolation is not yet verified. | 9/10 |
+| 4 | ⚪ LOW — remediated in build context | [be/.dockerignore](be/.dockerignore) | N/A | Backend image build context now excludes environment files, credentials, secrets, keys/certificates, local databases, and uploads. Image contents were not built or inspected. | 8/10 |
 
 ## False-positive and compatibility risks
 
@@ -112,8 +136,9 @@ evidence was produced in this review.
 - The WAF and Vault listeners use HTTP; Vault's server and Agent listener both
   disable TLS. This is limited to the isolated local Compose networks and is
   not suitable for Internet exposure.
-- `SESSION_COOKIE_SECURE` defaults to `false`; production HTTPS deployment
-  must set it to `true`.
+- `SESSION_COOKIE_SECURE` defaults to `false` for local HTTP development.
+  Production HTTPS deployment must set it to `true`; the loopback binding is
+  not a substitute for TLS when remote access is configured.
 - Compose networks reduce host exposure but do not encrypt traffic or prevent
   host-root/Docker-daemon administrators from entering containers and reading
   mounted files.
@@ -128,30 +153,34 @@ evidence was produced in this review.
   therefore requires restarting Flask; PostgreSQL password rotation must also
   be coordinated with PostgreSQL's actual role password and the protected
   password file.
-- Only the WAF is published to the host, but the default Compose network is
-  not divided into narrower frontend/WAF/backend/database segments.
+- Only the WAF is published to the host. Compose now has segmented
+  frontend/WAF/backend/database networks; their runtime isolation is not yet
+  verified.
 
 ## Tests performed
 
 | Command/check | Result |
 |---|---|
 | `docker compose config --quiet` | Pass |
+| Rendered WAF host bind check | Pass: port 8080 binds to 127.0.0.1 by default |
+| Rendered network membership check | Pass: services use separate ingress/database/Vault networks; only backend has non-internal outbound network |
+| Missing/short non-Vault `SECRET_KEY` config test | Pass |
+| `cd fe && npm test` | Pass: 21 tests across 6 files |
 | Rendered Compose assertions for ports, internal networks, AppRole wiring, and backend secret environment | Pass |
 | `git check-ignore` and `git ls-files` checks for the three bootstrap credential paths | Pass |
 | Tracked-file scan for non-placeholder secret assignments | No committed secret assignments detected |
 | `docker compose ps -a --format json` | No containers for the target project |
 | `docker volume ls --filter label=com.docker.compose.project=ds` | No Vault data volume for the target project |
-| `cd fe && npm test` | Could not run: `vitest` is not installed |
-| `cd be && pytest -q tests` (isolated temporary environment) | 39 passed, 1 failed |
-| `cd be && pytest -q tests/test_grading.py` | 3 passed, 1 failed; reproduces the suite failure in isolation |
+| `cd be && pytest -q tests` (isolated temporary environment, after remediation) | 40 passed, 1 failed; missing/short-key test passed both subcases |
+| Focused key security and related backend tests | 8 passed; 2 key-validation subcases passed |
+| `cd be && pytest -q tests/test_grading.py` (before remediation) | 3 passed, 1 failed; reproduces the existing suite failure in isolation |
 | `git diff --check` | Pass |
 
 The backend failure is
 `test_grading.py::GradingTests::test_grade_lifecycle_audit_and_publishing`,
 which expects an unpublished grade not to appear in the student's grade list.
 It is a grading behavior test, not a WAF/Vault test. A SQLAlchemy legacy API
-warning was also emitted. The temporary test environment was removed after
-the test run.
+warning was also emitted. The temporary isolated test environment was removed after validation.
 
 No containers were started, no Vault data was initialized, and no credentials
 or secret values were printed during this review.

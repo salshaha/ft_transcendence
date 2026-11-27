@@ -3,10 +3,72 @@ from datetime import timedelta
 from pathlib import Path
 from urllib.parse import quote_plus
 
+import hvac
+import requests
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
+
+VAULT_AGENT_ADDR = os.getenv("VAULT_AGENT_ADDR")
+
+
+def load_vault_secrets():
+    if not VAULT_AGENT_ADDR:
+        return {}
+
+    client = hvac.Client(url=VAULT_AGENT_ADDR, timeout=5)
+    try:
+        response = client.secrets.kv.v2.read_secret_version(
+            mount_point="secret",
+            path="ft-transcendence/backend",
+        )
+    except (
+        hvac.exceptions.VaultError,
+        requests.exceptions.RequestException,
+    ) as exc:
+        raise RuntimeError(
+            "Unable to read backend secrets from Vault Agent"
+        ) from exc
+
+    secret_data = response["data"]["data"]
+    required_keys = {
+        "SECRET_KEY",
+        "POSTGRES_DB",
+        "POSTGRES_USER",
+        "POSTGRES_PASSWORD",
+    }
+    allowed_keys = required_keys | {"MICROSOFT_CLIENT_SECRET"}
+    if not isinstance(secret_data, dict):
+        raise RuntimeError(
+            "Vault backend secret data must be a key/value object"
+        )
+    missing_keys = required_keys.difference(secret_data)
+    if missing_keys:
+        raise RuntimeError(
+            "Vault backend secret is missing required fields: "
+            + ", ".join(sorted(missing_keys))
+        )
+    unexpected_keys = set(secret_data).difference(allowed_keys)
+    if unexpected_keys:
+        raise RuntimeError(
+            "Vault backend secret contains unexpected fields: "
+            + ", ".join(sorted(unexpected_keys))
+        )
+    if any(
+        not isinstance(secret_data[key], str) or not secret_data[key]
+        for key in required_keys
+    ):
+        raise RuntimeError(
+            "Required Vault backend secret fields must be non-empty strings"
+        )
+    if len(secret_data["SECRET_KEY"]) < 32:
+        raise RuntimeError("Vault SECRET_KEY must be at least 32 characters")
+
+    return secret_data
+
+
+VAULT_SECRETS = load_vault_secrets()
 
 
 def env_bool(name, default=False):
@@ -23,7 +85,15 @@ def env_int(name, default):
         return default
 
 
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
+if VAULT_AGENT_ADDR:
+    SECRET_KEY = VAULT_SECRETS["SECRET_KEY"]
+else:
+    SECRET_KEY = os.getenv("SECRET_KEY", "").strip()
+    if len(SECRET_KEY) < 32:
+        raise RuntimeError(
+            "SECRET_KEY must be configured with at least 32 characters "
+            "when Vault is not enabled"
+        )
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:8080")
 FRONTEND_ORIGINS = [
     origin.strip()
@@ -32,13 +102,26 @@ FRONTEND_ORIGINS = [
 ]
 
 # In Compose, Flask reaches PostgreSQL through the private service network.
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = None if VAULT_AGENT_ADDR else os.getenv("DATABASE_URL")
 if DATABASE_URL:
     SQLALCHEMY_DATABASE_URI = DATABASE_URL
 else:
-    db_user = quote_plus(os.environ["POSTGRES_USER"])
-    db_password = quote_plus(os.environ["POSTGRES_PASSWORD"])
-    db_name = quote_plus(os.environ["POSTGRES_DB"])
+    db_user = quote_plus(
+        VAULT_SECRETS.get("POSTGRES_USER", os.environ.get("POSTGRES_USER", ""))
+    )
+    db_password = quote_plus(
+        VAULT_SECRETS.get(
+            "POSTGRES_PASSWORD", os.environ.get("POSTGRES_PASSWORD", "")
+        )
+    )
+    db_name = quote_plus(
+        VAULT_SECRETS.get("POSTGRES_DB", os.environ.get("POSTGRES_DB", ""))
+    )
+    if not db_user or not db_password or not db_name:
+        raise RuntimeError(
+            "Database credentials must be provided through Vault or local "
+            "development environment variables"
+        )
     db_host = os.getenv("POSTGRES_HOST", "localhost")
     db_port = os.getenv("POSTGRES_PORT", "5432")
     SQLALCHEMY_DATABASE_URI = (
@@ -57,7 +140,10 @@ PERMANENT_SESSION_LIFETIME = timedelta(
 )
 
 MICROSOFT_CLIENT_ID = os.getenv("MICROSOFT_CLIENT_ID", "").strip()
-MICROSOFT_CLIENT_SECRET = os.getenv("MICROSOFT_CLIENT_SECRET", "").strip()
+MICROSOFT_CLIENT_SECRET = VAULT_SECRETS.get(
+    "MICROSOFT_CLIENT_SECRET",
+    "" if VAULT_AGENT_ADDR else os.getenv("MICROSOFT_CLIENT_SECRET", ""),
+).strip()
 MICROSOFT_TENANT_ID = os.getenv("MICROSOFT_TENANT_ID", "organizations").strip()
 MICROSOFT_REDIRECT_URI = os.getenv(
     "MICROSOFT_REDIRECT_URI",
@@ -104,15 +190,4 @@ STORAGE_MAX_PROJECT_SUBMISSION_BYTES = env_int(
 )
 
 
-# Microsoft Entra ID (organizational / multi-tenant)
-MICROSOFT_CLIENT_ID = os.getenv("MICROSOFT_CLIENT_ID")
-MICROSOFT_CLIENT_SECRET = os.getenv("MICROSOFT_CLIENT_SECRET")
-MICROSOFT_AUTHORITY = os.getenv(
-    "MICROSOFT_AUTHORITY",
-    "https://login.microsoftonline.com/organizations",
-)
-MICROSOFT_REDIRECT_URI = os.getenv(
-    "MICROSOFT_REDIRECT_URI",
-    "http://localhost:8080/auth/microsoft/callback",
-)
 MICROSOFT_SCOPES = ["User.Read"]
