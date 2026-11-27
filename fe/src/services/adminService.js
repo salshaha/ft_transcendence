@@ -2,6 +2,101 @@ import { apiDownload, apiRequest } from "./apiClient";
 
 const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "");
 
+export function getAdminDashboard() {
+  return apiRequest("/api/admin/dashboard", {
+    errorMessage: "Unable to retrieve admin dashboard.",
+  });
+}
+
+export function getAdminUsers({ search = "", role = "", page = 1, perPage = 50 } = {}) {
+  const params = new URLSearchParams();
+  if (search) params.set("search", search);
+  if (role) params.set("role", role);
+  params.set("page", page);
+  params.set("per_page", perPage);
+  const query = params.toString();
+  return apiRequest(`/api/admin/users${query ? `?${query}` : ""}`, {
+    errorMessage: "Unable to retrieve users.",
+  });
+}
+
+export function createAdminUser(payload) {
+  return apiRequest("/api/admin/users", {
+    method: "POST",
+    payload,
+    errorMessage: "Unable to create user.",
+  });
+}
+
+export function updateAdminUser(userId, payload) {
+  return apiRequest(`/api/admin/users/${userId}`, {
+    method: "PUT",
+    payload,
+    errorMessage: "Unable to update user.",
+  });
+}
+
+export function deleteAdminUser(userId) {
+  return apiRequest(`/api/admin/users/${userId}`, {
+    method: "DELETE",
+    errorMessage: "Unable to delete user.",
+  });
+}
+
+export function getAdminCourses() {
+  return apiRequest("/api/admin/courses", {
+    errorMessage: "Unable to retrieve courses.",
+  });
+}
+
+export function createAdminCourse(payload) {
+  return apiRequest("/api/admin/courses", {
+    method: "POST",
+    payload,
+    errorMessage: "Unable to create course.",
+  });
+}
+
+export function updateAdminCourse(courseId, payload) {
+  return apiRequest(`/api/admin/courses/${courseId}`, {
+    method: "PUT",
+    payload,
+    errorMessage: "Unable to update course.",
+  });
+}
+
+export function deleteAdminCourse(courseId) {
+  return apiRequest(`/api/admin/courses/${courseId}`, {
+    method: "DELETE",
+    errorMessage: "Unable to delete course.",
+  });
+}
+
+export function enrollStudentInCourse(courseId, studentId) {
+  return apiRequest(`/api/admin/courses/${courseId}/students`, {
+    method: "POST",
+    payload: { student_id: studentId },
+    errorMessage: "Unable to enroll student.",
+  });
+}
+
+export function removeStudentFromCourse(courseId, studentId) {
+  return apiRequest(`/api/admin/courses/${courseId}/students/${studentId}`, {
+    method: "DELETE",
+    errorMessage: "Unable to remove student.",
+  });
+}
+
+export function getAdminPeerFeedback({ projectId, studentId } = {}) {
+  const params = new URLSearchParams();
+  if (projectId) params.set("project_id", projectId);
+  if (studentId) params.set("student_id", studentId);
+  const query = params.toString();
+  return apiRequest(`/api/admin/peer-feedback${query ? `?${query}` : ""}`, {
+    errorMessage: "Unable to retrieve peer feedback.",
+  });
+}
+
 function dateParams({ start_date, end_date }) {
   const params = new URLSearchParams();
   if (start_date) params.set("start_date", start_date);
