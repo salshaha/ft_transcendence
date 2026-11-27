@@ -5,19 +5,24 @@ services:
     restart: unless-stopped
 
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_DB: ${POSTGRES_DB:-team_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD_FILE: /vault/credentials/postgres-password
 
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./sql/sql-schema.sql:/docker-entrypoint-initdb.d/init.sql
-      - type: bind
-        source: ./vault/credentials/postgres-password
-        target: /run/secrets/postgres_password
-        read_only: true
-        bind:
-          create_host_path: false
+      - vault_credentials:/vault/credentials:ro
+
+    depends_on:
+      vault-init:
+        condition: service_completed_successfully
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-team_platform}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
 
     networks:
       - backend_database
@@ -29,6 +34,10 @@ services:
 
     container_name: team-platform-backend
     restart: unless-stopped
+    command:
+      - /bin/sh
+      - -c
+      - python -m flask --app run db upgrade heads && exec python -m flask --app run run --host=0.0.0.0 --port=5000
 
     environment:
       VAULT_AGENT_ADDR: http://vault-agent:8100
@@ -50,10 +59,14 @@ services:
       STORAGE_MAX_PROJECT_REQUIREMENTS_BYTES: ${STORAGE_MAX_PROJECT_REQUIREMENTS_BYTES:-20971520}
       STORAGE_MAX_TASK_ATTACHMENT_BYTES: ${STORAGE_MAX_TASK_ATTACHMENT_BYTES:-26214400}
       STORAGE_MAX_PROJECT_SUBMISSION_BYTES: ${STORAGE_MAX_PROJECT_SUBMISSION_BYTES:-104857600}
+      STORAGE_ROOT: /app/uploads
+
+    volumes:
+      - backend_uploads:/app/uploads
 
     depends_on:
       postgres:
-        condition: service_started
+        condition: service_healthy
       vault-agent:
         condition: service_healthy
 
@@ -73,6 +86,7 @@ services:
 
     volumes:
       - ./fe:/app
+      - /app/node_modules
 
     environment:
       NODE_ENV: development
@@ -124,13 +138,14 @@ services:
     networks:
       - frontend_ingress
       - backend_ingress
+      - waf_public
 
   vault:
     image: hashicorp/vault:2.2.2
     container_name: team-platform-vault
     restart: unless-stopped
 
-    command: ["server", "-config=/vault/config/vault.hcl"]
+    command: ["server"]
     cap_add:
       - IPC_LOCK
     security_opt:
@@ -139,6 +154,33 @@ services:
     volumes:
       - vault_data:/vault/file
       - ./vault/vault.hcl:/vault/config/vault.hcl:ro
+
+    networks:
+      - vault_private
+
+  vault-init:
+    image: hashicorp/vault:2.2.2
+    container_name: team-platform-vault-init
+    user: "0:0"
+    restart: "no"
+
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - tr -d '\r' < /vault/auto-unseal.sh > /tmp/auto-unseal.sh && exec /bin/sh /tmp/auto-unseal.sh
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-team_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      VAULT_AGENT_UID: ${VAULT_AGENT_UID:-1000}
+      VAULT_AGENT_GID: ${VAULT_AGENT_GID:-1000}
+
+    volumes:
+      - ./vault/auto-unseal.sh:/vault/auto-unseal.sh:ro
+      - ./vault/policies/backend.hcl:/vault/policies/backend.hcl:ro
+      - vault_credentials:/vault/credentials
+
+    depends_on:
+      - vault
 
     networks:
       - vault_private
@@ -154,25 +196,12 @@ services:
       - no-new-privileges:true
 
     volumes:
-      - type: bind
-        source: ./vault/agent.hcl
-        target: /vault/config/agent.hcl
-        read_only: true
-      - type: bind
-        source: ./vault/credentials/backend-role-id
-        target: /vault/credentials/backend-role-id
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./vault/credentials/backend-secret-id
-        target: /vault/credentials/backend-secret-id
-        read_only: true
-        bind:
-          create_host_path: false
+      - ./vault/agent.hcl:/vault/config/agent.hcl:ro
+      - vault_credentials:/vault/credentials:ro
 
     depends_on:
-      - vault
+      vault-init:
+        condition: service_completed_successfully
 
     networks:
       - backend_vault
@@ -188,6 +217,8 @@ services:
 volumes:
   postgres_data:
   vault_data:
+  vault_credentials:
+  backend_uploads:
 
 networks:
   vault_private:
@@ -201,3 +232,4 @@ networks:
   frontend_ingress:
     internal: true
   backend_egress:
+  waf_public:
