@@ -21,6 +21,16 @@ server {
         proxy_pass http://backend:5000;
     }
 
+    location ^~ /socket.io/ {
+        include /etc/nginx/includes/proxy-headers.conf;
+        proxy_pass http://backend:5000;
+    }
+
+    location ^~ /ws/ {
+        include /etc/nginx/includes/proxy-headers.conf;
+        proxy_pass http://backend:5000;
+    }
+
     location / {
         include /etc/nginx/includes/proxy-headers.conf;
         proxy_pass http://frontend:5173;

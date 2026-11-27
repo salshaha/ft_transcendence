@@ -17,6 +17,75 @@ import {
   subscribeToAdminAnalytics,
 } from "../services/adminService";
 
+const VALID_SEMESTERS = new Set(["fall", "spring", "summer"]);
+
+function validateCourseForm(form, courses, instructors, editingCourseId) {
+  const actionVerb = editingCourseId ? "updated" : "created";
+  const name = String(form.name || "").trim();
+  const academicYear = String(form.academic_year || "").trim();
+  const semester = String(form.semester || "").trim().toLowerCase();
+  const instructorRaw = String(form.instructor_id ?? "").trim();
+  const microsoftClassId = String(form.microsoft_class_id || "").trim();
+
+  const missing = [];
+  if (!name) missing.push("Name");
+  if (!academicYear) missing.push("Academic year");
+  if (!semester) missing.push("Semester");
+  if (!instructorRaw) missing.push("Instructor");
+
+  if (missing.length > 0) {
+    return {
+      error: `Course cannot be ${actionVerb}. Please fill in: ${missing.join(", ")}.`,
+    };
+  }
+  if (academicYear.length > 20) {
+    return {
+      error: `Course cannot be ${actionVerb}. Academic year must be 20 characters or fewer.`,
+    };
+  }
+  if (!VALID_SEMESTERS.has(semester)) {
+    return {
+      error: `Course cannot be ${actionVerb}. Please select a valid semester.`,
+    };
+  }
+  const instructorId = Number(instructorRaw);
+  if (!Number.isInteger(instructorId) || instructorId <= 0) {
+    return {
+      error: `Course cannot be ${actionVerb}. Please select a valid instructor.`,
+    };
+  }
+  if (
+    instructors.length > 0 &&
+    !instructors.some((instructor) => Number(instructor.id) === instructorId)
+  ) {
+    return {
+      error: `Course cannot be ${actionVerb}. Selected instructor was not found.`,
+    };
+  }
+  if (
+    microsoftClassId &&
+    courses.some(
+      (course) =>
+        course.id !== editingCourseId &&
+        course.microsoft_class_id === microsoftClassId,
+    )
+  ) {
+    return {
+      error: `Course cannot be ${actionVerb}. Microsoft Class ID "${microsoftClassId}" is already used by another course.`,
+    };
+  }
+
+  return {
+    payload: {
+      name,
+      academic_year: academicYear,
+      semester,
+      instructor_id: instructorId,
+      microsoft_class_id: microsoftClassId || null,
+    },
+  };
+}
+
 const SERIES = {
   users: { label: "New accounts", color: "#0f766e" },
   teams: { label: "Teams created", color: "#2563eb" },
@@ -187,6 +256,7 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
 
   // Courses
   const [courses, setCourses] = useState([]);
+  const [instructors, setInstructors] = useState([]);
   const [coursesLoading, setCoursesLoading] = useState(false);
   const [coursesError, setCoursesError] = useState("");
   const [creatingCourse, setCreatingCourse] = useState(false);
@@ -194,6 +264,7 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
   const [courseForm, setCourseForm] = useState({ name: "", academic_year: "", semester: "fall", instructor_id: "", microsoft_class_id: "" });
   const [savingCourse, setSavingCourse] = useState(false);
   const [courseMessage, setCourseMessage] = useState("");
+  const [courseFormError, setCourseFormError] = useState("");
   const [deletingCourseId, setDeletingCourseId] = useState(null);
 
   const range = useMemo(() => ({ start_date: startDate, end_date: endDate }), [startDate, endDate]);
@@ -245,30 +316,33 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
       .finally(() => setCoursesLoading(false));
   }, []);
 
-  // Load courses
+  // Load courses and instructors
   useEffect(() => {
     if (active !== "courses") return;
     loadCourses();
+    getAdminUsers({ role: "instructor", perPage: 100 })
+      .then((data) => setInstructors(data.users || []))
+      .catch(() => {});
   }, [active, loadCourses]);
 
   async function handleCreateCourse() {
+    const validation = validateCourseForm(courseForm, courses, instructors, null);
+    if (validation.error) {
+      setCourseFormError(validation.error);
+      return;
+    }
     setSavingCourse(true);
     setCourseMessage("");
+    setCourseFormError("");
     try {
-      await createAdminCourse({
-        name: courseForm.name,
-        academic_year: courseForm.academic_year,
-        semester: courseForm.semester,
-        instructor_id: courseForm.instructor_id ? Number(courseForm.instructor_id) : null,
-        microsoft_class_id: courseForm.microsoft_class_id || null,
-      });
+      await createAdminCourse(validation.payload);
       setCreatingCourse(false);
       setCourseForm({ name: "", academic_year: "", semester: "fall", instructor_id: "", microsoft_class_id: "" });
       setCourseMessage("Course created successfully.");
       loadCourses();
       getAdminDashboard().then(setStats).catch(() => {});
     } catch (requestError) {
-      setCourseMessage(requestError.message);
+      setCourseFormError(requestError.message);
     } finally {
       setSavingCourse(false);
     }
@@ -276,22 +350,22 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
 
   async function handleUpdateCourse() {
     if (!editingCourse) return;
+    const validation = validateCourseForm(courseForm, courses, instructors, editingCourse);
+    if (validation.error) {
+      setCourseFormError(validation.error);
+      return;
+    }
     setSavingCourse(true);
     setCourseMessage("");
+    setCourseFormError("");
     try {
-      await updateAdminCourse(editingCourse, {
-        name: courseForm.name,
-        academic_year: courseForm.academic_year,
-        semester: courseForm.semester,
-        instructor_id: courseForm.instructor_id ? Number(courseForm.instructor_id) : null,
-        microsoft_class_id: courseForm.microsoft_class_id || null,
-      });
+      await updateAdminCourse(editingCourse, validation.payload);
       setEditingCourse(null);
       setCourseForm({ name: "", academic_year: "", semester: "fall", instructor_id: "", microsoft_class_id: "" });
       setCourseMessage("Course updated successfully.");
       loadCourses();
     } catch (requestError) {
-      setCourseMessage(requestError.message);
+      setCourseFormError(requestError.message);
     } finally {
       setSavingCourse(false);
     }
@@ -323,6 +397,7 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
       microsoft_class_id: c.microsoft_class_id || "",
     });
     setCourseMessage("");
+    setCourseFormError("");
   }
 
   // Analytics
@@ -740,7 +815,7 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
                     <h1 className="mt-2 text-2xl font-extrabold tracking-tight text-[#003C43] sm:text-[30px]">Courses</h1>
                     <p className="mt-2 text-sm leading-6 text-[#6d898b]">View all courses, instructors, and enrollment counts.</p>
                   </div>
-                  <button onClick={() => { setCreatingCourse(true); setCourseForm({ name: "", academic_year: "", semester: "fall", instructor_id: "", microsoft_class_id: "" }); setCourseMessage(""); }} className="rounded-lg border border-[#cdded9] bg-white px-4 py-2.5 text-sm font-semibold text-[#28675d] hover:bg-[#f8fbfa]">+ Add course</button>
+                  <button onClick={() => { setCreatingCourse(true); setCourseForm({ name: "", academic_year: "", semester: "fall", instructor_id: "", microsoft_class_id: "" }); setCourseMessage(""); setCourseFormError(""); }} className="rounded-lg border border-[#cdded9] bg-white px-4 py-2.5 text-sm font-semibold text-[#28675d] hover:bg-[#f8fbfa]">+ Add course</button>
                 </div>
                 {courseMessage && <p className="mb-4 rounded-xl border border-[#135D66]/15 bg-[#E3FEF7] px-4 py-3 text-sm font-semibold text-[#135D66]" role="status">{courseMessage}</p>}
                 {coursesError && <p className="mb-4 rounded-xl border border-[#f0d2d2] bg-white p-4 text-sm text-[#a94646]" role="alert">{coursesError}</p>}
@@ -782,30 +857,114 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
                 )}
                 {/* Create/Edit course modal */}
                 {(creatingCourse || editingCourse) && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => { setCreatingCourse(false); setEditingCourse(null); }}>
-                    <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => { setCreatingCourse(false); setEditingCourse(null); setCourseFormError(""); }}>
+                    <form
+                      noValidate
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (editingCourse) handleUpdateCourse();
+                        else handleCreateCourse();
+                      }}
+                      className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <h2 className="mb-4 text-lg font-bold text-[#003C43]">{editingCourse ? "Edit course" : "Create course"}</h2>
+                      {courseFormError && (
+                        <p className="mb-4 rounded-xl border border-[#f0d2d2] bg-[#fff5f5] px-3 py-2.5 text-xs font-semibold text-[#a94646]" role="alert">
+                          {courseFormError}
+                        </p>
+                      )}
                       <div className="space-y-3">
-                        <label className="block text-xs font-semibold text-[#56736d]">Name<input value={courseForm.name} onChange={(e) => setCourseForm({ ...courseForm, name: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
-                        <label className="block text-xs font-semibold text-[#56736d]">Academic year<input value={courseForm.academic_year} onChange={(e) => setCourseForm({ ...courseForm, academic_year: e.target.value })} placeholder="2025/2026" className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
                         <label className="block text-xs font-semibold text-[#56736d]">
-                          Semester
-                          <select value={courseForm.semester} onChange={(e) => setCourseForm({ ...courseForm, semester: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm">
+                          Name *
+                          <input
+                            value={courseForm.name}
+                            onChange={(e) => {
+                              setCourseForm({ ...courseForm, name: e.target.value });
+                              setCourseFormError("");
+                            }}
+                            placeholder="e.g. Software Engineering"
+                            className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm"
+                          />
+                        </label>
+                        <label className="block text-xs font-semibold text-[#56736d]">
+                          Academic year *
+                          <input
+                            value={courseForm.academic_year}
+                            onChange={(e) => {
+                              setCourseForm({ ...courseForm, academic_year: e.target.value });
+                              setCourseFormError("");
+                            }}
+                            placeholder="2025/2026"
+                            className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm"
+                          />
+                        </label>
+                        <label className="block text-xs font-semibold text-[#56736d]">
+                          Semester *
+                          <select
+                            value={courseForm.semester}
+                            onChange={(e) => {
+                              setCourseForm({ ...courseForm, semester: e.target.value });
+                              setCourseFormError("");
+                            }}
+                            className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm"
+                          >
                             <option value="fall">Fall</option>
                             <option value="spring">Spring</option>
                             <option value="summer">Summer</option>
                           </select>
                         </label>
-                        <label className="block text-xs font-semibold text-[#56736d]">Instructor ID<input type="number" value={courseForm.instructor_id} onChange={(e) => setCourseForm({ ...courseForm, instructor_id: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
-                        <label className="block text-xs font-semibold text-[#56736d]">Microsoft Class ID<input value={courseForm.microsoft_class_id} onChange={(e) => setCourseForm({ ...courseForm, microsoft_class_id: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
+                        <label className="block text-xs font-semibold text-[#56736d]">
+                          Instructor *
+                          {instructors.length > 0 ? (
+                            <select
+                              value={courseForm.instructor_id}
+                              onChange={(e) => {
+                                setCourseForm({ ...courseForm, instructor_id: e.target.value });
+                                setCourseFormError("");
+                              }}
+                              className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm"
+                            >
+                              <option value="">Select an instructor…</option>
+                              {instructors.map((instructor) => (
+                                <option key={instructor.id} value={String(instructor.id)}>
+                                  {instructor.full_name || `${instructor.first_name || ""} ${instructor.last_name || ""}`.trim() || instructor.email} (ID: {instructor.id})
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="number"
+                              min="1"
+                              value={courseForm.instructor_id}
+                              onChange={(e) => {
+                                setCourseForm({ ...courseForm, instructor_id: e.target.value });
+                                setCourseFormError("");
+                              }}
+                              placeholder="Instructor user ID"
+                              className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm"
+                            />
+                          )}
+                        </label>
+                        <label className="block text-xs font-semibold text-[#56736d]">
+                          Microsoft Class ID (optional)
+                          <input
+                            value={courseForm.microsoft_class_id}
+                            onChange={(e) => {
+                              setCourseForm({ ...courseForm, microsoft_class_id: e.target.value });
+                              setCourseFormError("");
+                            }}
+                            className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm"
+                          />
+                        </label>
                       </div>
                       <div className="mt-5 flex justify-end gap-2">
-                        <button onClick={() => { setCreatingCourse(false); setEditingCourse(null); }} className="rounded-lg border border-[#cdded9] bg-white px-4 py-2 text-sm font-semibold text-[#28675d] hover:bg-[#f8fbfa]">Cancel</button>
-                        <button onClick={editingCourse ? handleUpdateCourse : handleCreateCourse} disabled={savingCourse} className="rounded-lg bg-[#075e54] px-4 py-2 text-sm font-semibold text-white hover:bg-[#064e46] disabled:opacity-50">
+                        <button type="button" onClick={() => { setCreatingCourse(false); setEditingCourse(null); setCourseFormError(""); }} className="rounded-lg border border-[#cdded9] bg-white px-4 py-2 text-sm font-semibold text-[#28675d] hover:bg-[#f8fbfa]">Cancel</button>
+                        <button type="submit" disabled={savingCourse} className="rounded-lg bg-[#075e54] px-4 py-2 text-sm font-semibold text-white hover:bg-[#064e46] disabled:opacity-50">
                           {savingCourse ? "Saving…" : (editingCourse ? "Update" : "Create")}
                         </button>
                       </div>
-                    </div>
+                    </form>
                   </div>
                 )}
               </>
