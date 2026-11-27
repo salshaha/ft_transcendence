@@ -67,6 +67,10 @@ class Project(db.Model):
             name="chk_project_max_members",
         ),
         db.CheckConstraint("max_grade > 0", name="chk_projects_max_grade"),
+        db.CheckConstraint(
+            "status IN ('todo', 'in_progress', 'review', 'done')",
+            name="chk_projects_status",
+        ),
         db.Index("idx_projects_course", "course_id"),
     )
 
@@ -78,6 +82,7 @@ class Project(db.Model):
     )
     title = db.Column(db.String(255))
     description = db.Column(db.Text)
+    status = db.Column(db.String(20), nullable=False, server_default="todo", default="todo")
     deadline = db.Column(db.DateTime(timezone=True))
     min_members_per_team = db.Column(db.Integer, nullable=False)
     max_members_per_team = db.Column(db.Integer, nullable=False)

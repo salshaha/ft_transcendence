@@ -145,6 +145,8 @@ CREATE TABLE projects (
 
     title VARCHAR(255),
     description TEXT,
+    status VARCHAR(20) NOT NULL DEFAULT 'todo'
+        CHECK (status IN ('todo', 'in_progress', 'review', 'done')),
     deadline TIMESTAMPTZ,
     min_members_per_team INTEGER NOT NULL,
     max_members_per_team INTEGER NOT NULL,

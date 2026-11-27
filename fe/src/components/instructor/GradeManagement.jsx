@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Modal from "./Modal";
 import { formatDate } from "./formatters";
 import {
@@ -10,8 +10,8 @@ import {
   setInstructorGradePublished,
 } from "../../services/instructorService";
 
-export default function GradeManagement({ courses = [], projects = [] }) {
-  const [courseId, setCourseId] = useState("");
+export default function GradeManagement({ courses = [], projects = [], initialCourseId = "" }) {
+  const [courseId, setCourseId] = useState(initialCourseId ? String(initialCourseId) : "");
   const [projectId, setProjectId] = useState("all");
   const [studentId, setStudentId] = useState("all");
   const [grades, setGrades] = useState([]);
@@ -25,6 +25,7 @@ export default function GradeManagement({ courses = [], projects = [] }) {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [publishingId, setPublishingId] = useState(null);
   const [publishingAll, setPublishingAll] = useState(false);
+  const gradeRequestId = useRef(0);
 
   const courseOptions = useMemo(() => courses, [courses]);
   const projectOptions = useMemo(() => {
@@ -33,6 +34,10 @@ export default function GradeManagement({ courses = [], projects = [] }) {
   }, [courseOptions, courseId]);
 
   useEffect(() => {
+    if (initialCourseId) {
+      setCourseId(String(initialCourseId));
+      return;
+    }
     if (courseOptions.length === 0) {
       setCourseId("");
       return;
@@ -40,7 +45,7 @@ export default function GradeManagement({ courses = [], projects = [] }) {
     if (!courseOptions.some((course) => String(course.id) === String(courseId))) {
       setCourseId(String(courseOptions[0].id));
     }
-  }, [courseOptions, courseId]);
+  }, [initialCourseId, courseOptions, courseId]);
 
   async function loadStudents(selectedCourseId) {
     if (!selectedCourseId) {
@@ -56,6 +61,7 @@ export default function GradeManagement({ courses = [], projects = [] }) {
   }
 
   async function loadGrades() {
+    const requestId = ++gradeRequestId.current;
     if (!courseId) {
       setGrades([]);
       return;
@@ -64,15 +70,16 @@ export default function GradeManagement({ courses = [], projects = [] }) {
     setError("");
     try {
       const data = await getInstructorGrades({
-        courseId: Number(courseId),
-        projectId: projectId === "all" ? null : Number(projectId),
-        studentId: studentId === "all" ? null : Number(studentId),
+        course_id: Number(courseId),
+        project_id: projectId === "all" ? null : Number(projectId),
+        student_id: studentId === "all" ? null : Number(studentId),
       });
+      if (requestId !== gradeRequestId.current) return;
       setGrades(Array.isArray(data.grades) ? data.grades : []);
     } catch (requestError) {
-      setError(requestError.message);
+      if (requestId === gradeRequestId.current) setError(requestError.message);
     } finally {
-      setLoading(false);
+      if (requestId === gradeRequestId.current) setLoading(false);
     }
   }
 

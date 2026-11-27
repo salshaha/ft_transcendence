@@ -296,8 +296,10 @@ def serialize_current_project(student_id, viewer_id=None, course_ids=None):
         "id": project.id,
         "title": project.title,
         "description": project.description,
+        "project_status": project.status or "todo",
         "deadline": project.deadline.isoformat() if project.deadline else None,
         "status": team.status if team else None,
+
         "course": {
             "id": project.course.id,
             "name": project.course.name,
@@ -633,6 +635,8 @@ def get_course_project(student_id, course_id):
             "id": project.id,
             "title": project.title,
             "description": project.description,
+            "status": project.status or "todo",
+            "project_status": project.status or "todo",
             "deadline": project.deadline.isoformat() if project.deadline else None,
             "min_members_per_team": project.min_members_per_team,
             "max_members_per_team": project.max_members_per_team,
@@ -856,7 +860,7 @@ def create_team(student_id, data):
 
     name = (data.get("name") or "").strip()
     if not name:
-        name = f"Team {student_id}"
+        raise ValueError("Team name is required")
     if len(name) > 150:
         raise ValueError("Team name must be 150 characters or fewer")
     if Team.query.filter_by(project_id=project.id, name=name).first():

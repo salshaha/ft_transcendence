@@ -112,6 +112,10 @@ def can_give_task_feedback(user, task):
     )
 
 
+def can_update_task_status(user, task):
+    return can_give_task_feedback(user, task)
+
+
 def _scope_tasks(query, user):
     if user.role == "admin":
         return query
@@ -183,6 +187,7 @@ def serialize_task(task):
         "project": {
             "id": project.id,
             "title": project.title,
+            "status": project.status or "todo",
         } if project else None,
         "course": {
             "id": course.id,
@@ -376,7 +381,12 @@ def _load_task(task_id):
 
 def update_task(user, task_id, data):
     task = _load_task(task_id)
-    if not can_manage_team_tasks(user, task.team):
+    instructor_status_only = (
+        user.role == "instructor"
+        and set(data.keys()) == {"status"}
+        and can_update_task_status(user, task)
+    )
+    if not instructor_status_only and not can_manage_team_tasks(user, task.team):
         raise TaskError("You cannot edit tasks for this team", 403)
 
     if "team_id" in data:

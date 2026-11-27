@@ -27,6 +27,9 @@ from app.services.auth_service import get_authenticated_user
 from app.services.task_service import serialize_task
 
 
+PROJECT_STATUSES = frozenset({"todo", "in_progress", "review", "done"})
+
+
 def get_authenticated_instructor():
     return get_authenticated_user(allowed_roles={"instructor"})
 
@@ -78,6 +81,7 @@ def _serialize_course_projects(course):
         {
             "id": project.id,
             "title": project.title,
+            "status": project.status or "todo",
             "max_grade": float(project.max_grade) if project.max_grade else 100.0,
         }
         for project in sorted(course.projects, key=lambda item: item.id, reverse=True)
@@ -185,6 +189,7 @@ def get_projects(instructor_id):
             "id": project.id,
             "course": {"id": project.course.id, "name": project.course.name},
             "title": project.title,
+            "status": project.status or "todo",
             "description": project.description,
             "deadline": project.deadline.isoformat() if project.deadline else None,
             "requirements": {
@@ -654,6 +659,15 @@ def _parse_int(value, field_name, default=None):
         raise ValueError(f"{field_name} must be an integer") from exc
 
 
+def _parse_project_status(value, default="todo"):
+    if value is None or value == "":
+        return default
+    status = str(value).strip().lower()
+    if status not in PROJECT_STATUSES:
+        raise ValueError("status must be one of: todo, in_progress, review, done")
+    return status
+
+
 def get_course(instructor_id, course_id):
     return Course.query.filter_by(
         id=course_id, instructor_id=instructor_id
@@ -874,6 +888,7 @@ def serialize_project(project):
         "id": project.id,
         "course_id": project.course_id,
         "title": project.title,
+        "status": project.status or "todo",
         "description": project.description,
         "deadline": project.deadline.isoformat() if project.deadline else None,
         "min_members_per_team": project.min_members_per_team,
@@ -920,6 +935,7 @@ def create_project(instructor_id, course_id, data):
         course_id=course.id,
         title=(data.get("title") or "").strip() or None,
         description=data.get("description"),
+        status=_parse_project_status(data.get("status")),
         deadline=deadline,
         min_members_per_team=min_members,
         max_members_per_team=max_members,
@@ -966,6 +982,8 @@ def update_project(instructor_id, project_id, data):
 
     if "title" in data:
         project.title = (data.get("title") or "").strip() or None
+    if "status" in data:
+        project.status = _parse_project_status(data.get("status"), project.status)
     if "description" in data:
         project.description = data.get("description")
     if "prd" in data:

@@ -12,6 +12,7 @@ import {
   toUtcIsoString,
 } from "../components/instructor/formatters"
 import StudentProfileModal from "../components/instructor/StudentProfileModal"
+import SubmissionGradeEditor from "../components/instructor/SubmissionGradeEditor"
 import SubmissionTimeline from "../components/instructor/SubmissionTimeline"
 import TaskDetailsModal from "../components/instructor/TaskDetailsModal"
 import {
@@ -22,6 +23,7 @@ import {
   getInstructorCourseStudents,
   getInstructorCourses,
   getInstructorDashboard,
+  getInstructorGrades,
   getInstructorProjectTeams,
   getInstructorSubmissions,
   getInstructorTeamKanban,
@@ -452,6 +454,8 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
   const [taskStatusFilter, setTaskStatusFilter] = useState("all")
   const [selectedTask, setSelectedTask] = useState(null)
   const [allSubmissions, setAllSubmissions] = useState([])
+  const [submissionGrades, setSubmissionGrades] = useState([])
+  const [submissionStudents, setSubmissionStudents] = useState({})
   const [loadingSubmissions, setLoadingSubmissions] = useState(false)
   const [submissionsError, setSubmissionsError] = useState("")
   const [studentProfileId, setStudentProfileId] = useState(null)
@@ -516,14 +520,45 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
     }
   }, [active, data])
 
+  async function loadSubmissionData() {
+    const [submissionResponse, gradeResponse] = await Promise.all([
+      getInstructorSubmissions(),
+      getInstructorGrades(),
+    ])
+    const items = submissionResponse.submissions || []
+    const grades = Array.isArray(gradeResponse.grades) ? gradeResponse.grades : []
+    const courseIds = [...new Set(items.map((item) => item.course_id).filter(Boolean))]
+    const studentEntries = await Promise.all(
+      courseIds.map(async (courseId) => {
+        const response = await getInstructorCourseStudents(courseId)
+        return [courseId, Array.isArray(response.students) ? response.students : []]
+      }),
+    )
+    return {
+      submissions: items,
+      grades,
+      students: Object.fromEntries(studentEntries),
+    }
+  }
+
+  async function refreshSubmissionData() {
+    const result = await loadSubmissionData()
+    setAllSubmissions(result.submissions)
+    setSubmissionGrades(result.grades)
+    setSubmissionStudents(result.students)
+  }
+
   useEffect(() => {
     if (active !== "Submissions") return undefined
     let activeRequest = true
     setLoadingSubmissions(true)
     setSubmissionsError("")
-    getInstructorSubmissions()
-      .then((response) => {
-        if (activeRequest) setAllSubmissions(response.submissions || [])
+    loadSubmissionData()
+      .then((result) => {
+        if (!activeRequest) return
+        setAllSubmissions(result.submissions)
+        setSubmissionGrades(result.grades)
+        setSubmissionStudents(result.students)
       })
       .catch((error) => {
         if (activeRequest) setSubmissionsError(error.message)
@@ -732,6 +767,7 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
       courseId: project?.course?.id ?? (courseId === "" ? "" : Number(courseId)),
       title: project?.title ?? "",
       description: project?.description ?? "",
+      status: project?.status ?? "todo",
       min_members_per_team: project?.min_members_per_team ?? 2,
       max_members_per_team: project?.max_members_per_team ?? 5,
       deadline: toDateTimeInput(project?.deadline),
@@ -751,6 +787,10 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
 
     if (!fields.title.trim()) {
       setProjectError("Project title is required.")
+      return
+    }
+    if (!["todo", "in_progress", "review", "done"].includes(fields.status)) {
+      setProjectError("Select a valid project status.")
       return
     }
     if (!id) {
@@ -1192,7 +1232,10 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
                           <article key={project.id} className="rounded-xl bg-[#f0f7f6] p-4">
                             <div className="flex flex-wrap items-start justify-between gap-2">
                               <div>
-                                <h3 className="font-bold text-[#003C43]">{project.title || "Untitled project"}</h3>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <h3 className="font-bold text-[#003C43]">{project.title || "Untitled project"}</h3>
+                                  <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${statusTone(project.status || "todo")}`}>{String(project.status || "todo").replaceAll("_", " ")}</span>
+                                </div>
                                 <p className="mt-1 text-xs text-[#587376]">Teams of {project.min_members_per_team}–{project.max_members_per_team} · {project.team_count} teams · {formatDate(project.deadline)}</p>
                               </div>
                               <button type="button" onClick={() => openProjectEditor(project)} className="rounded-lg bg-[#135D66] px-3 py-2 text-[11px] font-bold text-white">Manage</button>
@@ -1230,6 +1273,7 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
                   {loadingCourseTeams ? <p className="mt-4 text-sm text-[#6d898b]">Loading teams…</p> : courseTeamsError ? <p className="mt-4 text-sm text-[#a94646]" role="alert">{courseTeamsError}</p> : courseTeams.length ? <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{courseTeams.map((team) => <article key={team.id} className="rounded-xl border border-[#003C43]/10 bg-[#f7fbfa] p-4"><div className="flex items-center justify-between gap-2"><h3 className="font-bold text-[#003C43]">{team.name}</h3><span className="rounded-full bg-[#E3FEF7] px-2 py-1 text-[10px] font-bold text-[#135D66]">{team.status.replaceAll("_", " ")}</span></div><p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-[#135D66]">{team.project_title || `Project ${team.project_id}`}</p><p className="mt-1 text-xs text-[#6d898b]">{team.member_count} {team.member_count === 1 ? "member" : "members"}</p><ul className="mt-3 space-y-1.5">{team.members.map((member) => <li key={member.student_id} className="text-sm text-[#365c60]">{member.name}{member.student_id === team.leader_id ? <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-[#77B0AA]">Leader</span> : null}</li>)}</ul><button type="button" onClick={() => openTeamBoard(team, team.project_id)} className="mt-4 rounded-lg bg-[#135D66] px-3 py-2 text-[11px] font-bold text-white">Open board</button></article>
 )}</div> : <p className="mt-4 rounded-xl bg-[#f0f7f6] p-4 text-sm text-[#587376]">{selectedCourseProjects.length ? "No teams have joined these projects yet." : "Teams will appear here after a project is created and students form teams."}</p>}
                 </div>
+                <GradeManagement courses={courses} projects={projects} initialCourseId={selectedCourse.id} />
               </section>
             ) : active === "Courses" ? (
               <section className="theme-surface rounded-2xl border border-[#003C43]/8 bg-white p-5 shadow-[0_8px_30px_rgba(0,60,67,0.04)] sm:p-6">
@@ -1412,7 +1456,7 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
                   <span className="rounded-full bg-[#E3FEF7] px-3 py-1 text-[10px] font-bold text-[#135D66]">{allSubmissions.length} total</span>
                 </div>
                 <div className="mt-5">
-                  {loadingSubmissions ? <p className="text-sm text-[#6d898b]">Loading submissions…</p> : submissionsError ? <p className="text-sm text-[#a94646]" role="alert">{submissionsError}</p> : <SubmissionTimeline submissions={allSubmissions} onView={previewSubmission} onDownload={downloadSubmission} onOpen={previewSubmission} />}
+                  {loadingSubmissions ? <p className="text-sm text-[#6d898b]">Loading submissions…</p> : submissionsError ? <p className="text-sm text-[#a94646]" role="alert">{submissionsError}</p> : <SubmissionTimeline submissions={allSubmissions} onView={previewSubmission} onDownload={downloadSubmission} onOpen={previewSubmission} renderGradeEditor={(submission) => <SubmissionGradeEditor submission={submission} students={submissionStudents[submission.course_id] || []} grade={submissionGrades.find((grade) => String(grade.student_id) === String(submission.submitted_by) && String(grade.project_id) === String(submission.project_id)) || null} maxGrade={Number(projects.find((project) => String(project.id) === String(submission.project_id))?.max_grade) || 100} onSaved={refreshSubmissionData} />} />}
                 </div>
               </section>
             ) : active === "Settings" ? (
@@ -1463,6 +1507,7 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
                   )}
                   <label className="block text-xs font-semibold text-[#365c60]">Project title<input value={projectEditor.title} onChange={(e) => setProjectEditor({ ...projectEditor, title: e.target.value })} className="mt-1 w-full rounded-lg border border-[#003C43]/15 p-2.5 text-sm" /></label>
                   <label className="block text-xs font-semibold text-[#365c60]">Description<textarea value={projectEditor.description} onChange={(e) => setProjectEditor({ ...projectEditor, description: e.target.value })} rows="3" className="mt-1 w-full rounded-lg border border-[#003C43]/15 p-2.5 text-sm" /></label>
+                  <label className="block text-xs font-semibold text-[#365c60]">Status<select value={projectEditor.status} onChange={(e) => setProjectEditor({ ...projectEditor, status: e.target.value })} className="mt-1 w-full rounded-lg border border-[#003C43]/15 bg-white p-2.5 text-sm"><option value="todo">To do</option><option value="in_progress">In progress</option><option value="review">Review</option><option value="done">Done</option></select></label>
                   <label className="block text-xs font-semibold text-[#365c60]">Project requirements file<input type="file" accept=".pdf,application/pdf" required={!projectEditor.requirementsName} onChange={(e) => setProjectEditor({ ...projectEditor, requirementsFile: e.target.files?.[0] || null })} className="mt-1 w-full rounded-lg border border-[#003C43]/15 bg-white p-2.5 text-sm" /><span className="mt-1 block font-normal text-[#718b8d]">Upload a PDF file.{projectEditor.requirementsFile ? ` Selected: ${projectEditor.requirementsFile.name}` : projectEditor.requirementsName ? ` Current file: ${projectEditor.requirementsName}` : " Required for this project."}</span></label>
                   <div className="grid gap-3 sm:grid-cols-3"><label className="text-xs font-semibold text-[#365c60]">Min team size<input type="number" min="1" required value={projectEditor.min_members_per_team} onChange={(e) => setProjectEditor({ ...projectEditor, min_members_per_team: e.target.value })} className="mt-1 w-full rounded-lg border border-[#003C43]/15 p-2.5 text-sm" /></label><label className="text-xs font-semibold text-[#365c60]">Max team size<input type="number" min="1" required value={projectEditor.max_members_per_team} onChange={(e) => setProjectEditor({ ...projectEditor, max_members_per_team: e.target.value })} className="mt-1 w-full rounded-lg border border-[#003C43]/15 p-2.5 text-sm" /></label><label className="text-xs font-semibold text-[#365c60]">Deadline<input type="datetime-local" value={projectEditor.deadline} onChange={(e) => setProjectEditor({ ...projectEditor, deadline: e.target.value })} className="mt-1 w-full rounded-lg border border-[#003C43]/15 p-2.5 text-sm" /></label></div>
                   {projectError && <p className="text-sm text-[#a94646]" role="alert">{projectError}</p>}
@@ -1475,6 +1520,7 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
                 task={selectedTask}
                 onClose={() => setSelectedTask(null)}
                 canManage={false}
+                canUpdateStatus={true}
                 viewerRole="instructor"
                 currentUserId={instructor?.id}
                 onTaskUpdated={(updated) => {
