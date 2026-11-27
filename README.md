@@ -316,7 +316,7 @@ The project uses environment variables for configuration.
 Create your local `.env` file from the example:
 
 ```bash
-cp .env.example .env
+cp -n .env.example .env
 ```
 
 The `.env` file must **not** be committed to Git.
@@ -336,14 +336,14 @@ but not the actual developer-specific:
 ### Example `.env`
 
 ```env
-SECRET_KEY=generate-a-unique-random-value-at-least-32-characters-long
-
 POSTGRES_DB=ft_transcendence
 POSTGRES_USER=postgres
-POSTGRES_PASSWORD=change-this-password
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
+VAULT_AGENT_UID=1000
+VAULT_AGENT_GID=1000
 WAF_PUBLIC_ORIGIN=http://localhost:8080
+WAF_BIND_ADDRESS=127.0.0.1
 WAF_HTTP_PORT=8080
 WAF_SERVER_NAME=localhost
 
@@ -353,9 +353,23 @@ DATABASE_URL=postgresql+psycopg2://postgres:change-this-password@localhost:5432/
 The browser-facing application origin is the WAF. Flask and PostgreSQL use
 private Compose networking.
 
-Never commit real passwords, API keys, tokens, or other secrets.
+`DATABASE_URL` is only for local, non-Compose backend runs; Compose does not
+pass it to Flask.
 
-For Microsoft sign-in, roster tokens are encrypted in local file storage using a key derived from `SECRET_KEY`. Set a unique, stable secret of at least 32 characters before connecting Microsoft accounts; changing it later requires users to sign in with Microsoft again.
+For Compose, keep passwords, API keys, `SECRET_KEY`, and other application
+secrets in Vault or the protected credential files described in the Vault
+section below, not in `.env`. Never commit real passwords, API keys, tokens,
+or other secrets.
+
+When running Flask outside Compose/Vault, set `SECRET_KEY` in your ignored
+local `.env` to a unique random value of at least 32 characters. The backend
+now fails during startup if this key is missing or too short; do not use a
+shared development key for a reachable deployment.
+
+For Microsoft sign-in, roster tokens are encrypted in local file storage using
+a key derived from Vault's `SECRET_KEY`. Use a unique, stable secret of at
+least 32 characters before connecting Microsoft accounts; changing it later
+requires users to sign in with Microsoft again.
 
 Additional security/storage settings (all optional for local development):
 
@@ -381,12 +395,11 @@ file-storage decisions.
 
 ## Microsoft sign-in and course roster sync
 
-Create a Microsoft Entra app registration for **accounts in this organization** and add a **Web** redirect URI that exactly matches `MICROSOFT_REDIRECT_URI` (the local default is `http://localhost:5000/api/auth/microsoft/callback`). Add these values to the local `.env` file:
+Create a Microsoft Entra app registration for **accounts in this organization** and add a **Web** redirect URI that exactly matches `MICROSOFT_REDIRECT_URI` (the local default is `http://localhost:5000/api/auth/microsoft/callback`). In Compose, store the client secret in Vault; only non-secret identifiers and the redirect URI belong in `.env`:
 
 ```env
 MICROSOFT_TENANT_ID=your-tenant-id
 MICROSOFT_CLIENT_ID=your-application-client-id
-MICROSOFT_CLIENT_SECRET=your-client-secret
 MICROSOFT_REDIRECT_URI=http://localhost:5000/api/auth/microsoft/callback
 ```
 
@@ -589,10 +602,252 @@ docker compose up -d --build
 ```
 
 The application is served through the Nginx + ModSecurity + OWASP CRS gateway at
-`http://localhost:8080` by default. The frontend and Flask backend are reachable
-only on the private Compose network; PostgreSQL is not published to the host.
-Set `WAF_HTTP_PORT` to change the host port and `WAF_PUBLIC_ORIGIN` to its
-matching public URL.
+`http://localhost:8080` by default. The gateway binds to `127.0.0.1` by default,
+so its HTTP listener is only available from the Docker host. The frontend and
+Flask backend are reachable only on the private Compose network; PostgreSQL is
+not published to the host. Set `WAF_HTTP_PORT` to change the host port and
+`WAF_PUBLIC_ORIGIN` to its matching URL. Do not set `WAF_BIND_ADDRESS` to a
+non-loopback address for direct HTTP exposure; use a trusted TLS-terminating
+ingress for remote access.
+
+## Vault (single-node lab and backend AppRole)
+
+Compose includes the official HashiCorp image `hashicorp/vault:2.2.2` (verified
+against the [official Docker Hub tags](https://hub.docker.com/r/hashicorp/vault/tags)
+on 2026-11-26). Vault runs in server mode, stores data in the persistent
+`vault_data` volume, and reads its server configuration from
+[vault/vault.hcl](vault/vault.hcl). Its network is internal with no host-published
+ports. TLS is disabled only for this isolated lab network; do not attach
+untrusted containers or expose Vault without configuring TLS and access controls.
+
+The Flask backend authenticates through a dedicated Vault Agent using AppRole.
+The backend talks only to that Agent; Vault itself is not on the backend's
+network. The Agent's API proxy forces its own short-lived, restricted token
+onto requests. It does not expose a Vault token or the AppRole Secret ID to
+Flask.
+
+### Prepare local configuration
+
+Create `.env` for non-secret Compose settings:
+
+```bash
+cp -n .env.example .env
+```
+
+If migrating an existing `.env`, remove its old `SECRET_KEY`,
+`POSTGRES_PASSWORD`, and `MICROSOFT_CLIENT_SECRET` entries after moving their
+values to the protected files and Vault secret described below.
+
+For Compose, PostgreSQL reads its password from a protected host file, not
+`.env` or a container environment variable. Create a file containing only the
+password, with no trailing spaces or quotes:
+
+```bash
+umask 077
+install -d -m 700 vault/credentials
+vi vault/credentials/postgres-password
+chmod 600 vault/credentials/postgres-password
+```
+
+If the PostgreSQL data volume already exists, use the password currently
+configured in that database (typically the old `.env` value). The image does
+not reset credentials on an initialized data volume; change the database
+password in PostgreSQL before updating the protected file and Vault secret.
+Set `VAULT_AGENT_UID` and `VAULT_AGENT_GID` in `.env` to the host user's
+numeric IDs (`id -u` and `id -g`) so the non-root Vault Agent process can read
+the owner-only AppRole files.
+
+The PostgreSQL container reads this file through a read-only mount using
+`POSTGRES_PASSWORD_FILE`. It is ignored by Git. The Compose backend does not
+receive `.env`; secret values are fetched from Vault at startup. Keep
+`SECRET_KEY`, PostgreSQL credentials, and `MICROSOFT_CLIENT_SECRET` (when
+Microsoft sign-in is used) in Vault, not `.env`.
+
+### Start, initialize, and unseal Vault
+
+Start Vault:
+
+```bash
+docker compose pull vault
+docker compose up -d vault
+docker compose exec vault vault version
+```
+
+On the first start only, initialize Vault:
+
+```bash
+docker compose exec vault vault operator init -key-shares=5 -key-threshold=3
+```
+
+Initialization creates the encryption material, saves the initialized state,
+and outputs unseal key shares plus an initial root token. Store the root token
+in a trusted, access-controlled password manager or equivalent offline
+administrative secret store. Protect each unseal share and distribute shares
+to separate trusted custodians. Never put these in `.env`, source code,
+Dockerfiles, application environment variables, shell commands, logs, or
+screenshots.
+
+Initialization does not unseal Vault. Unsealing supplies enough key shares to
+reconstruct the encryption key in memory and make Vault operational. For the
+configured threshold of three, run this command three times and enter a
+different share at each prompt:
+
+```bash
+docker compose exec -it vault vault operator unseal
+```
+
+Check the state:
+
+```bash
+docker compose exec vault vault status
+```
+
+After a container or host restart, Vault retains data in `vault_data` but
+starts sealed; unseal it again. Never initialize an already initialized
+volume.
+
+### Configure KV v2 and the backend AppRole
+
+Log in interactively as an administrator. Enter the token at the prompt; do
+not add it to Compose or Flask environment variables:
+
+```bash
+docker compose exec -it vault vault login -address=http://127.0.0.1:8200
+```
+
+Enable the KV version 2 engine, upload the restrictive policy, enable AppRole,
+and create the backend role:
+
+```bash
+docker compose exec vault vault secrets enable -address=http://127.0.0.1:8200 -path=secret kv-v2
+docker compose exec -T vault vault policy write -address=http://127.0.0.1:8200 ft-transcendence-backend - < vault/policies/backend.hcl
+docker compose exec vault vault auth enable -address=http://127.0.0.1:8200 approle
+docker compose exec vault vault write -address=http://127.0.0.1:8200 auth/approle/role/ft-transcendence-backend token_policies=ft-transcendence-backend token_no_default_policy=true token_type=service token_ttl=15m token_max_ttl=1h token_num_uses=0 secret_id_ttl=720h secret_id_num_uses=0
+```
+
+The policy is [vault/policies/backend.hcl](vault/policies/backend.hcl). It
+grants only `read` on the KV v2 data endpoint
+`secret/data/ft-transcendence/backend`, plus `update` only on
+`auth/token/renew-self` so Vault Agent can renew its own token. It grants no
+secret write, list, delete, metadata, admin, or root permissions. The role has
+no default policy. Service tokens are renewable, start with a 15-minute TTL,
+have unlimited uses, and have a 1-hour maximum TTL; Vault Agent renews them
+and re-authenticates when necessary. The Secret ID expires after 30 days and
+is reusable so Agent can re-authenticate. Rotate it before expiry.
+
+### Put backend secrets in Vault and provision AppRole files
+
+Create a protected JSON file using a local editor. It should contain only
+values Flask actually uses: the session `SECRET_KEY`, PostgreSQL database,
+username and password, and (if Microsoft sign-in is configured) the
+Microsoft client secret. The PostgreSQL password must match
+`vault/credentials/postgres-password`. Use a unique random `SECRET_KEY` of at
+least 32 characters. Do not pass secret values as shell arguments.
+
+```bash
+umask 077
+vi vault/credentials/backend-secrets.json
+chmod 600 vault/credentials/backend-secrets.json
+```
+
+Expected JSON shape:
+
+```json
+{
+  "SECRET_KEY": "<unique-random-value>",
+  "POSTGRES_DB": "team_platform",
+  "POSTGRES_USER": "postgres",
+  "POSTGRES_PASSWORD": "<same-value-as-postgres-password-file>",
+  "MICROSOFT_CLIENT_SECRET": "<omit-if-not-used>"
+}
+```
+
+Stream the secret file to Vault over stdin. It is not included in the Docker
+image:
+
+```bash
+docker compose exec -T vault vault kv put -address=http://127.0.0.1:8200 -mount=secret ft-transcendence/backend @/dev/stdin < vault/credentials/backend-secrets.json
+```
+
+Create protected host files for the Agent. The Role ID identifies the role;
+the Secret ID is a sensitive login credential. Both files are ignored by Git,
+protected by host file permissions, and mounted read-only. The Secret ID stays
+on the host for Agent re-authentication, so protect the host and rotate the
+ID before its 30-day expiry.
+
+```bash
+umask 077
+install -d -m 700 vault/credentials
+docker compose exec -T vault vault read -address=http://127.0.0.1:8200 -field=role_id auth/approle/role/ft-transcendence-backend/role-id > vault/credentials/backend-role-id
+docker compose exec -T vault vault write -address=http://127.0.0.1:8200 -f -field=secret_id auth/approle/role/ft-transcendence-backend/secret-id > vault/credentials/backend-secret-id
+chmod 600 vault/credentials/backend-role-id vault/credentials/backend-secret-id
+```
+
+The Agent configuration is [vault/agent.hcl](vault/agent.hcl). Its proxy
+forces the AppRole token onto requests, so callers cannot supply a different
+token to bypass the role's restrictions. Its listener is reachable only over
+the private backend-to-Agent network.
+
+Start the full stack after the password and AppRole files exist:
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+The backend reads `secret/ft-transcendence/backend` (KV v2 API path
+`secret/data/ft-transcendence/backend`) through Vault Agent at startup and
+fails explicitly if Vault is unavailable or required values are missing. To
+change values, update the KV secret and restart the backend. Remove the local
+`backend-secrets.json` after successful upload using an appropriate secure
+local cleanup procedure.
+
+### Verify allowed and denied access
+
+This probe reads the permitted path without printing secret contents, then
+checks that another path and a write to the permitted path are denied:
+
+```bash
+docker compose exec -T backend python - <<'PY'
+import hvac
+
+client = hvac.Client(url="http://vault-agent:8100")
+client.secrets.kv.v2.read_secret_version(
+    mount_point="secret", path="ft-transcendence/backend"
+)
+print("permitted read succeeded")
+
+for operation in (
+    lambda: client.secrets.kv.v2.read_secret_version(
+        mount_point="secret", path="ft-transcendence"
+    ),
+    lambda: client.secrets.kv.v2.create_or_update_secret(
+        mount_point="secret",
+        path="ft-transcendence/backend",
+        secret={"probe": "must be denied"},
+    ),
+):
+    try:
+        operation()
+    except hvac.exceptions.Forbidden:
+        print("denied as expected")
+    else:
+        raise SystemExit("ERROR: backend unexpectedly had excess permissions")
+PY
+```
+
+### Local Compose security limitations
+
+Compose file-backed mounts are not an encrypted secrets manager: host root
+and Docker administrators can read mounted files, and anyone able to control
+the Docker daemon can inspect or enter containers. Protect the host account
+and disk, keep `vault/credentials/` out of unprotected backups, and do not
+treat `.gitignore` as encryption. The Agent's unencrypted HTTP listener is
+limited to its private internal Docker network; do not publish it, attach
+untrusted containers to that network, or use this lab topology as a production
+boundary. Protect Vault's data volume and unseal-share backups too. Production
+deployments should use TLS, a production-grade storage/seal design, and
+managed workload identity.
 
 Inspect WAF and audit logs (the Docker log driver rotates WAF logs):
 

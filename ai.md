@@ -13,14 +13,25 @@ changes, demo data, and how to access and test the application.
 From the project root:
 
 ```bash
+cp -n .env.example .env
+# Follow the "Vault (single-node lab and backend AppRole)" bootstrap in README.md.
+```
+
+The full Compose stack requires Vault to be initialized and unsealed, the KV v2
+engine and backend AppRole to be configured, and the protected credential files
+to exist before starting the application services. Once bootstrapped, start it
+with:
+
+```bash
 docker compose up -d --build
 ```
 
-Services:
+Only the WAF is published to the host, at `http://localhost:8080` by default.
+Its default host binding is loopback-only. Flask, Vite, and PostgreSQL are not
+published to host ports.
 
-- Frontend: http://localhost:5173
-- Backend API: http://localhost:5000
-- PostgreSQL: localhost:5432
+See [README.md](README.md#vault-single-node-lab-and-backend-approle) for the
+complete credential-safe setup, startup, unseal, and verification steps.
 
 ### Running backend locally
 
@@ -52,20 +63,19 @@ http://localhost:5173
 
 ### Database access
 
-PostgreSQL is configured by `.env`:
+PostgreSQL Compose settings include the database and user in `.env`. Its
+password is stored in `vault/credentials/postgres-password` and loaded through
+a read-only mount; the same credential is stored in Vault for the backend:
 
 ```env
 POSTGRES_DB=team_platform
 POSTGRES_USER=postgres
-POSTGRES_PASSWORD=change_this_to_a_strong_password
 POSTGRES_PORT=5432
 ```
 
-Connect with:
-
-```bash
-psql -h localhost -p 5432 -U postgres -d team_platform
-```
+PostgreSQL is not published to the host in Compose. Connect from the backend
+network or use an explicitly controlled administrative procedure; do not add a
+public database port mapping.
 
 ---
 
@@ -267,7 +277,10 @@ Supported categories:
 ## 7. Notes and limitations
 
 - Real-time WebSockets, direct messaging, friends, notifications, public API,
-  WAF, Vault, and internationalization are not fully implemented.
+  and internationalization are not fully implemented.
+- WAF/ModSecurity/CRS and Vault/AppRole integration are configured in Compose,
+  but live blocking, Vault policy enforcement, persistence, and full-stack
+  connectivity still require runtime testing.
 - Course slides and labs are intentionally excluded from this phase.
 - SSR is intentionally skipped.
 - The implementation focuses on the core workflow:
