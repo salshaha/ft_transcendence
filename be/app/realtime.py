@@ -4,11 +4,13 @@ from flask import has_app_context, session, request
 from flask_socketio import emit, join_room, leave_room
 import json
 from queue import Empty, Full, Queue
+import socket as stdlib_socket
 from threading import Event, Lock, Thread
+from flask import Blueprint, Response, current_app, has_app_context, request, session
 from flask_sock import Sock
 from sqlalchemy import event
 from sqlalchemy.orm import Session
-from simple_websocket import ConnectionClosed
+from simple_websocket import ConnectionClosed, Server
 
 from app.extensions import db
 from app.models.activity_event import ActivityEvent
@@ -270,12 +272,83 @@ def _send_queued_updates(websocket, outgoing, stop_sender):
             return
 
 
+def _close_werkzeug_socket(ws):
+    if getattr(ws, "mode", None) != "werkzeug":
+        return
+    sock = getattr(ws, "sock", None)
+    if sock is None:
+        return
+    try:
+        sock.shutdown(stdlib_socket.SHUT_RDWR)
+    except OSError:
+        pass
+    try:
+        sock.close()
+    except OSError:
+        pass
+
+
+class _CleanWerkzeugSock(Sock):
+    """Avoid writing an HTTP 200 response onto a hijacked Werkzeug WebSocket."""
+
+    def route(self, path, bp=None, **kwargs):
+        def decorator(f):
+            def websocket_route(*args, **route_kwargs):
+                ws = Server(
+                    request.environ,
+                    **current_app.config.get("SOCK_SERVER_OPTIONS", {}),
+                )
+                try:
+                    f(ws, *args, **route_kwargs)
+                except ConnectionClosed:
+                    pass
+                try:
+                    ws.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
+                class WebSocketResponse(Response):
+                    def __call__(self, *call_args, **call_kwargs):
+                        if ws.mode == "werkzeug":
+                            _close_werkzeug_socket(ws)
+                            raise BrokenPipeError("WebSocket connection closed")
+                        if ws.mode == "eventlet":
+                            try:
+                                from eventlet.wsgi import WSGI_LOCAL
+                                ALREADY_HANDLED = []
+                            except ImportError:
+                                from eventlet.wsgi import ALREADY_HANDLED
+                                WSGI_LOCAL = None
+                            if hasattr(WSGI_LOCAL, "already_handled"):
+                                WSGI_LOCAL.already_handled = True
+                            return ALREADY_HANDLED
+                        if ws.mode == "gunicorn":
+                            raise StopIteration()
+                        return []
+
+                return WebSocketResponse()
+
+            websocket_route.__name__ = f.__name__
+            kwargs["websocket"] = True
+            if bp:
+                bp.route(path, **kwargs)(websocket_route)
+            elif self.app:
+                self.app.route(path, **kwargs)(websocket_route)
+            else:
+                if self.bp is None:
+                    self.bp = Blueprint("__flask_sock", __name__)
+                self.bp.route(path, **kwargs)(websocket_route)
+            return websocket_route
+
+        return decorator
+
+
 def init_admin_analytics(app):
     app.config.setdefault(
         "SOCK_SERVER_OPTIONS",
         {"ping_interval": 25, "max_message_size": 1024},
     )
-    sock = Sock(app)
+    sock = _CleanWerkzeugSock(app)
 
     @sock.route("/ws/admin-analytics")
     def admin_analytics(websocket):

@@ -342,10 +342,12 @@ def delete_user(user_id):
         message, status = error
         return jsonify({"message": message}), status
     try:
-        result = delete_user_admin(user_id)
+        result = delete_user_admin(user_id, actor_user_id=admin.id)
         return jsonify(result), 200
     except LookupError as exc:
         return jsonify({"message": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
     except SQLAlchemyError:
         return _database_error("Unable to delete user")
 

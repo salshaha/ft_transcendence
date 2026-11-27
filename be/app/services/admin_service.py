@@ -4,7 +4,14 @@ from sqlalchemy import func
 
 from app.extensions import db
 from app.models.activity_event import ActivityEvent
-from app.models.student_dashboard import Course, CourseEnrollment, Project, Task, Team
+from app.models.student_dashboard import (
+    Course,
+    CourseEnrollment,
+    Project,
+    Task,
+    Team,
+    TeamMember,
+)
 from app.models.submission import Submission
 from app.models.user import User
 from app.services.auth_service import get_authenticated_user
@@ -182,6 +189,15 @@ def list_users(search=None, role=None, page=1, per_page=50):
     per_page = min(max(1, per_page), 200)
     page = max(1, page)
     users = query.order_by(User.id.asc()).offset((page - 1) * per_page).limit(per_page).all()
+    user_ids = [u.id for u in users]
+    course_counts = {}
+    if user_ids:
+        course_counts = dict(
+            db.session.query(Course.instructor_id, func.count(Course.id))
+            .filter(Course.instructor_id.in_(user_ids))
+            .group_by(Course.instructor_id)
+            .all()
+        )
     return {
         "users": [
             {
@@ -192,6 +208,7 @@ def list_users(search=None, role=None, page=1, per_page=50):
                 "role": u.role,
                 "student_id": u.student_id,
                 "profile_picture": u.profile_picture,
+                "course_count": int(course_counts.get(u.id, 0)),
             }
             for u in users
         ],
@@ -222,6 +239,13 @@ def update_user_admin(user_id, data):
     if "role" in data and data.get("role") is not None:
         if data["role"] not in {"student", "instructor", "admin"}:
             raise ValueError("Invalid role")
+        if data["role"] != "instructor":
+            course_count = Course.query.filter_by(instructor_id=user.id).count()
+            if course_count > 0:
+                raise ValueError(
+                    f"Cannot change role: this user is still assigned to {course_count} course(s). "
+                    "Reassign their courses first."
+                )
         user.role = data["role"]
         if user.role != "student":
             user.student_id = None
@@ -236,10 +260,50 @@ def update_user_admin(user_id, data):
     return user
 
 
-def delete_user_admin(user_id):
+def _replacement_task_creator(task, deleting_user_id, actor_user_id):
+    team = task.team
+    if team is not None:
+        if team.leader_id and team.leader_id != deleting_user_id:
+            return team.leader_id
+        other_member = (
+            TeamMember.query.filter(
+                TeamMember.team_id == team.id,
+                TeamMember.student_id != deleting_user_id,
+            )
+            .first()
+        )
+        if other_member is not None:
+            return other_member.student_id
+        if team.project and team.project.course:
+            course_instructor_id = team.project.course.instructor_id
+            if course_instructor_id and course_instructor_id != deleting_user_id:
+                return course_instructor_id
+    if actor_user_id and actor_user_id != deleting_user_id:
+        return actor_user_id
+    return None
+
+
+def delete_user_admin(user_id, actor_user_id=None):
     user = db.session.get(User, user_id)
     if user is None:
         raise LookupError("User not found")
+    if actor_user_id is not None and user.id == actor_user_id:
+        raise ValueError("You cannot delete your own admin account.")
+    course_count = Course.query.filter_by(instructor_id=user.id).count()
+    if course_count > 0:
+        raise ValueError(
+            f"Cannot delete user: they are assigned as instructor to {course_count} course(s). "
+            "Reassign or delete those courses first."
+        )
+
+    for task in Task.query.filter_by(created_by=user.id).all():
+        replacement_id = _replacement_task_creator(task, user.id, actor_user_id)
+        if replacement_id is not None:
+            task.created_by = replacement_id
+        else:
+            db.session.delete(task)
+    db.session.flush()
+
     db.session.delete(user)
     db.session.commit()
     return {"message": "User deleted"}

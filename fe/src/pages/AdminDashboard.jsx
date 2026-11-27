@@ -252,6 +252,7 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
   const [newUserForm, setNewUserForm] = useState({ first_name: "", last_name: "", email: "", password: "", role: "student", student_id: "" });
   const [savingNewUser, setSavingNewUser] = useState(false);
   const [userMessage, setUserMessage] = useState("");
+  const [userFormError, setUserFormError] = useState("");
   const [deletingUserId, setDeletingUserId] = useState(null);
 
   // Courses
@@ -535,19 +536,39 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
       student_id: u.student_id || "",
     });
     setUserMessage("");
+    setUserFormError("");
   }
 
   async function saveEditUser() {
     if (!editingUser) return;
+    const editingTarget = users.find((u) => u.id === editingUser);
+    const firstName = String(editForm.first_name || "").trim();
+    const lastName = String(editForm.last_name || "").trim();
+    const email = String(editForm.email || "").trim();
+    const missing = [];
+    if (!firstName) missing.push("First name");
+    if (!lastName) missing.push("Last name");
+    if (!email) missing.push("Email");
+    if (missing.length > 0) {
+      setUserFormError(`User cannot be updated. Please fill in: ${missing.join(", ")}.`);
+      return;
+    }
+    if ((editingTarget?.course_count || 0) > 0 && editForm.role !== "instructor") {
+      setUserFormError(
+        `Cannot change role: this instructor is assigned to ${editingTarget.course_count} course(s). Reassign their courses first.`,
+      );
+      return;
+    }
     setSavingUser(true);
     setUserMessage("");
+    setUserFormError("");
     try {
       await updateAdminUser(editingUser, {
-        first_name: editForm.first_name,
-        last_name: editForm.last_name,
-        email: editForm.email,
+        first_name: firstName,
+        last_name: lastName,
+        email,
         role: editForm.role,
-        student_id: editForm.student_id || null,
+        student_id: editForm.role === "student" ? (editForm.student_id || null) : null,
       });
       setEditingUser(null);
       setUserMessage("User updated successfully.");
@@ -555,23 +576,37 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
       // Refresh stats
       getAdminDashboard().then(setStats).catch(() => {});
     } catch (requestError) {
-      setUserMessage(requestError.message);
+      setUserFormError(requestError.message);
     } finally {
       setSavingUser(false);
     }
   }
 
   async function handleCreateUser() {
+    const firstName = String(newUserForm.first_name || "").trim();
+    const lastName = String(newUserForm.last_name || "").trim();
+    const email = String(newUserForm.email || "").trim();
+    const password = String(newUserForm.password || "");
+    const missing = [];
+    if (!firstName) missing.push("First name");
+    if (!lastName) missing.push("Last name");
+    if (!email) missing.push("Email");
+    if (!password) missing.push("Password");
+    if (missing.length > 0) {
+      setUserFormError(`User cannot be created. Please fill in: ${missing.join(", ")}.`);
+      return;
+    }
     setSavingNewUser(true);
     setUserMessage("");
+    setUserFormError("");
     try {
       await createAdminUser({
-        first_name: newUserForm.first_name,
-        last_name: newUserForm.last_name,
-        email: newUserForm.email,
-        password: newUserForm.password,
+        first_name: firstName,
+        last_name: lastName,
+        email,
+        password,
         role: newUserForm.role,
-        student_id: newUserForm.student_id || null,
+        student_id: newUserForm.role === "student" ? (newUserForm.student_id || null) : null,
       });
       setCreatingUser(false);
       setNewUserForm({ first_name: "", last_name: "", email: "", password: "", role: "student", student_id: "" });
@@ -579,13 +614,27 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
       loadUsers();
       getAdminDashboard().then(setStats).catch(() => {});
     } catch (requestError) {
-      setUserMessage(requestError.message);
+      setUserFormError(requestError.message);
     } finally {
       setSavingNewUser(false);
     }
   }
 
   async function handleDeleteUser(userId) {
+    const targetUser = users.find((u) => u.id === userId);
+    if (userId === user?.id) {
+      setUserMessage("You cannot delete your own admin account.");
+      return;
+    }
+    if ((targetUser?.course_count || 0) > 0) {
+      const label =
+        `${targetUser.first_name || ""} ${targetUser.last_name || ""}`.trim() ||
+        targetUser.email;
+      setUserMessage(
+        `Cannot delete ${label}: they are assigned as instructor to ${targetUser.course_count} course(s). Reassign or delete those courses first.`,
+      );
+      return;
+    }
     if (!window.confirm("Delete this user? This cannot be undone.")) return;
     setDeletingUserId(userId);
     setUserMessage("");
@@ -696,7 +745,7 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
                     </select>
                   </label>
                   <button onClick={loadUsers} className="rounded-lg bg-[#075e54] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#064e46]">Search</button>
-                  <button onClick={() => setCreatingUser(true)} className="rounded-lg border border-[#cdded9] bg-white px-4 py-2.5 text-sm font-semibold text-[#28675d] hover:bg-[#f8fbfa]">+ Add user</button>
+                  <button onClick={() => { setCreatingUser(true); setUserFormError(""); setUserMessage(""); }} className="rounded-lg border border-[#cdded9] bg-white px-4 py-2.5 text-sm font-semibold text-[#28675d] hover:bg-[#f8fbfa]">+ Add user</button>
                 </div>
                 {userMessage && <p className="mb-4 rounded-xl border border-[#135D66]/15 bg-[#E3FEF7] px-4 py-3 text-sm font-semibold text-[#135D66]" role="status">{userMessage}</p>}
                 {usersError && <p className="mb-4 rounded-xl border border-[#f0d2d2] bg-white p-4 text-sm text-[#a94646]" role="alert">{usersError}</p>}
@@ -745,62 +794,88 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
 
                 {/* Create user modal */}
                 {creatingUser && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setCreatingUser(false)}>
-                    <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => { setCreatingUser(false); setUserFormError(""); }}>
+                    <form
+                      noValidate
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        handleCreateUser();
+                      }}
+                      className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <h2 className="mb-4 text-lg font-bold text-[#003C43]">Create user</h2>
+                      {userFormError && (
+                        <p className="mb-4 rounded-xl border border-[#f0d2d2] bg-[#fff5f5] px-3 py-2.5 text-xs font-semibold text-[#a94646]" role="alert">
+                          {userFormError}
+                        </p>
+                      )}
                       <div className="space-y-3">
-                        <label className="block text-xs font-semibold text-[#56736d]">First name<input value={newUserForm.first_name} onChange={(e) => setNewUserForm({ ...newUserForm, first_name: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
-                        <label className="block text-xs font-semibold text-[#56736d]">Last name<input value={newUserForm.last_name} onChange={(e) => setNewUserForm({ ...newUserForm, last_name: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
-                        <label className="block text-xs font-semibold text-[#56736d]">Email<input type="email" value={newUserForm.email} onChange={(e) => setNewUserForm({ ...newUserForm, email: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
-                        <label className="block text-xs font-semibold text-[#56736d]">Password<input type="password" value={newUserForm.password} onChange={(e) => setNewUserForm({ ...newUserForm, password: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
+                        <label className="block text-xs font-semibold text-[#56736d]">First name<input value={newUserForm.first_name} onChange={(e) => { setNewUserForm({ ...newUserForm, first_name: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
+                        <label className="block text-xs font-semibold text-[#56736d]">Last name<input value={newUserForm.last_name} onChange={(e) => { setNewUserForm({ ...newUserForm, last_name: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
+                        <label className="block text-xs font-semibold text-[#56736d]">Email<input type="email" value={newUserForm.email} onChange={(e) => { setNewUserForm({ ...newUserForm, email: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
+                        <label className="block text-xs font-semibold text-[#56736d]">Password<input type="password" value={newUserForm.password} onChange={(e) => { setNewUserForm({ ...newUserForm, password: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
                         <label className="block text-xs font-semibold text-[#56736d]">
                           Role
-                          <select value={newUserForm.role} onChange={(e) => setNewUserForm({ ...newUserForm, role: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm">
+                          <select value={newUserForm.role} onChange={(e) => { setNewUserForm({ ...newUserForm, role: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm">
                             <option value="student">Student</option>
                             <option value="instructor">Instructor</option>
                             <option value="admin">Admin</option>
                           </select>
                         </label>
                         {newUserForm.role === "student" && (
-                          <label className="block text-xs font-semibold text-[#56736d]">Student ID<input value={newUserForm.student_id} onChange={(e) => setNewUserForm({ ...newUserForm, student_id: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
+                          <label className="block text-xs font-semibold text-[#56736d]">Student ID<input value={newUserForm.student_id} onChange={(e) => { setNewUserForm({ ...newUserForm, student_id: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
                         )}
                       </div>
                       <div className="mt-5 flex justify-end gap-2">
-                        <button onClick={() => setCreatingUser(false)} className="rounded-lg border border-[#cdded9] bg-white px-4 py-2 text-sm font-semibold text-[#28675d] hover:bg-[#f8fbfa]">Cancel</button>
-                        <button onClick={handleCreateUser} disabled={savingNewUser} className="rounded-lg bg-[#075e54] px-4 py-2 text-sm font-semibold text-white hover:bg-[#064e46] disabled:opacity-50">
+                        <button type="button" onClick={() => { setCreatingUser(false); setUserFormError(""); }} className="rounded-lg border border-[#cdded9] bg-white px-4 py-2 text-sm font-semibold text-[#28675d] hover:bg-[#f8fbfa]">Cancel</button>
+                        <button type="submit" disabled={savingNewUser} className="rounded-lg bg-[#075e54] px-4 py-2 text-sm font-semibold text-white hover:bg-[#064e46] disabled:opacity-50">
                           {savingNewUser ? "Creating…" : "Create"}
                         </button>
                       </div>
-                    </div>
+                    </form>
                   </div>
                 )}
 
                 {/* Edit user modal */}
                 {editingUser && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setEditingUser(null)}>
-                    <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => { setEditingUser(null); setUserFormError(""); }}>
+                    <form
+                      noValidate
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        saveEditUser();
+                      }}
+                      className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <h2 className="mb-4 text-lg font-bold text-[#003C43]">Edit user</h2>
+                      {userFormError && (
+                        <p className="mb-4 rounded-xl border border-[#f0d2d2] bg-[#fff5f5] px-3 py-2.5 text-xs font-semibold text-[#a94646]" role="alert">
+                          {userFormError}
+                        </p>
+                      )}
                       <div className="space-y-3">
-                        <label className="block text-xs font-semibold text-[#56736d]">First name<input value={editForm.first_name} onChange={(e) => setEditForm({ ...editForm, first_name: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
-                        <label className="block text-xs font-semibold text-[#56736d]">Last name<input value={editForm.last_name} onChange={(e) => setEditForm({ ...editForm, last_name: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
-                        <label className="block text-xs font-semibold text-[#56736d]">Email<input value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
+                        <label className="block text-xs font-semibold text-[#56736d]">First name<input value={editForm.first_name} onChange={(e) => { setEditForm({ ...editForm, first_name: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
+                        <label className="block text-xs font-semibold text-[#56736d]">Last name<input value={editForm.last_name} onChange={(e) => { setEditForm({ ...editForm, last_name: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
+                        <label className="block text-xs font-semibold text-[#56736d]">Email<input value={editForm.email} onChange={(e) => { setEditForm({ ...editForm, email: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
                         <label className="block text-xs font-semibold text-[#56736d]">
                           Role
-                          <select value={editForm.role} onChange={(e) => setEditForm({ ...editForm, role: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm">
+                          <select value={editForm.role} onChange={(e) => { setEditForm({ ...editForm, role: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm">
                             <option value="student">Student</option>
                             <option value="instructor">Instructor</option>
                             <option value="admin">Admin</option>
                           </select>
                         </label>
-                        <label className="block text-xs font-semibold text-[#56736d]">Student ID<input value={editForm.student_id} onChange={(e) => setEditForm({ ...editForm, student_id: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
+                        <label className="block text-xs font-semibold text-[#56736d]">Student ID<input value={editForm.student_id} onChange={(e) => { setEditForm({ ...editForm, student_id: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
                       </div>
                       <div className="mt-5 flex justify-end gap-2">
-                        <button onClick={() => setEditingUser(null)} className="rounded-lg border border-[#cdded9] bg-white px-4 py-2 text-sm font-semibold text-[#28675d] hover:bg-[#f8fbfa]">Cancel</button>
-                        <button onClick={saveEditUser} disabled={savingUser} className="rounded-lg bg-[#075e54] px-4 py-2 text-sm font-semibold text-white hover:bg-[#064e46] disabled:opacity-50">
+                        <button type="button" onClick={() => { setEditingUser(null); setUserFormError(""); }} className="rounded-lg border border-[#cdded9] bg-white px-4 py-2 text-sm font-semibold text-[#28675d] hover:bg-[#f8fbfa]">Cancel</button>
+                        <button type="submit" disabled={savingUser} className="rounded-lg bg-[#075e54] px-4 py-2 text-sm font-semibold text-white hover:bg-[#064e46] disabled:opacity-50">
                           {savingUser ? "Saving…" : "Save"}
                         </button>
                       </div>
-                    </div>
+                    </form>
                   </div>
                 )}
               </>

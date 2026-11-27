@@ -24,10 +24,12 @@ vi.mock("../services/adminService", () => ({
 
 import {
   createAdminCourse,
+  deleteAdminUser,
   getAdminAnalytics,
   getAdminCourses,
   getAdminDashboard,
   getAdminUsers,
+  updateAdminUser,
 } from "../services/adminService";
 
 describe("AdminDashboard course creation validation", () => {
@@ -127,5 +129,43 @@ describe("AdminDashboard course creation validation", () => {
         microsoft_class_id: null,
       }),
     );
+  });
+
+  it("blocks deleting or demoting an instructor assigned to courses without calling the API", async () => {
+    getAdminUsers.mockResolvedValue({
+      users: [
+        {
+          id: 6,
+          first_name: "Instructor1",
+          last_name: "Demo",
+          email: "instructor1@example.com",
+          role: "instructor",
+          course_count: 2,
+        },
+      ],
+      total: 1,
+      pages: 1,
+    });
+
+    render(<AdminDashboard user={{ id: 1, first_name: "Admin", email: "admin@example.com" }} onLogout={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Users" }));
+    await waitFor(() => expect(screen.getByText("instructor1@example.com")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    const statusBanner = await screen.findByRole("status");
+    expect(statusBanner.textContent).toContain("assigned as instructor to 2 course(s)");
+    expect(deleteAdminUser).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const roleSelects = screen.getAllByRole("combobox", { name: /Role/i });
+    fireEvent.change(roleSelects[roleSelects.length - 1], {
+      target: { value: "student" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Cannot change role");
+    expect(updateAdminUser).not.toHaveBeenCalled();
   });
 });
