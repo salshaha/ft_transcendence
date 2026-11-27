@@ -208,6 +208,12 @@ def update_profile_fields(
 
 def update_profile(user, *, first_name=None, last_name=None, major=None,
                    joined_year=None, domain=None, student_id=None):
+    if user.role == "student" and any(
+        value is not None for value in (major, joined_year, domain)
+    ):
+        raise PermissionError(
+            "Major, academic department, and join year are read-only for students"
+        )
     if first_name is not None:
         error = validate_name(first_name, field_name="First name")
         if error:

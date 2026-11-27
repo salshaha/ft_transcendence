@@ -347,7 +347,7 @@ WAF_PUBLIC_ORIGIN=http://localhost:8080
 WAF_HTTP_PORT=8080
 WAF_SERVER_NAME=localhost
 
-DATABASE_URL=postgresql://postgres:change-this-password@localhost:5432/ft_transcendence
+DATABASE_URL=postgresql+psycopg2://postgres:change-this-password@localhost:5432/ft_transcendence
 ```
 
 The browser-facing application origin is the WAF. Flask and PostgreSQL use

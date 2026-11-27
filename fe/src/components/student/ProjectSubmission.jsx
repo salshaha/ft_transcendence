@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import ConfirmDialog from "./ConfirmDialog";
+import Modal from "../instructor/Modal";
 import { formatBytes, formatDate, statusTone } from "../instructor/formatters";
 import { useTeamRealtime } from "../../hooks/useTeamRealtime";
+import { API_URL } from "../../services/apiClient";
 import { saveFileBlob } from "../../services/instructorService";
-import {
-  fetchTeamSubmissionFile,
-  getTeamSubmission,
-  submitTeamProject,
-} from "../../services/studentService";
+import * as studentService from "../../services/studentService";
 
 export default function ProjectSubmission({ teamId, project, onSubmitted }) {
   const [submission, setSubmission] = useState(null);
@@ -16,13 +15,20 @@ export default function ProjectSubmission({ teamId, project, onSubmitted }) {
   const [file, setFile] = useState(null);
   const [progress, setProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [preview, setPreview] = useState(null);
   const fileInputRef = useRef(null);
+  const uploadControllerRef = useRef(null);
 
   const rules = project?.submission_file_rules || {};
   const extensions = Array.isArray(rules.accepted_extensions)
     ? rules.accepted_extensions
     : [];
+  const mimeTypes = Array.isArray(rules.accepted_mime_types)
+    ? rules.accepted_mime_types
+    : [];
   const maxBytes = Number(rules.max_size_bytes) || 100 * 1024 * 1024;
+  const accept = [...extensions.map((item) => `.${item}`), ...mimeTypes].join(",");
   const deadline = project?.deadline || null;
   const deadlinePassed = Boolean(
     deadline && new Date(deadline).getTime() < Date.now(),
@@ -31,7 +37,7 @@ export default function ProjectSubmission({ teamId, project, onSubmitted }) {
   const loadSubmission = useCallback(async () => {
     if (!teamId) return;
     try {
-      const data = await getTeamSubmission(teamId);
+      const data = await studentService.getTeamSubmission(teamId);
       setSubmission(data.submission || null);
     } catch (requestError) {
       setError(requestError.message || "Unable to load the team submission.");
@@ -57,6 +63,9 @@ export default function ProjectSubmission({ teamId, project, onSubmitted }) {
       return `Unsupported file type. Allowed: ${extensions
         .map((item) => `.${item}`)
         .join(", ")}`;
+    }
+    if (mimeTypes.length && selected.type && !mimeTypes.includes(selected.type)) {
+      return `Unsupported file type. Allowed: ${mimeTypes.join(", ")}`;
     }
     if (selected.size > maxBytes) {
       return `File is larger than the ${formatBytes(maxBytes)} limit.`;

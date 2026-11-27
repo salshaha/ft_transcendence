@@ -1,14 +1,19 @@
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 
 from app.extensions import db
 from app.models.skill import Skill, StudentSkill
-from app.models.student_dashboard import Course, CourseEnrollment, Team, TeamMember
+from app.models.student_dashboard import Course, CourseEnrollment, Project, Team, TeamMember
 from app.models.user import User
 from app.services import presence_service
+from app.services.peer_feedback_service import project_has_ended
 from app.services.student_service import (
+    CLOSED_TEAM_STATUSES,
     PROFICIENCY_LABELS,
+    _team_restriction_reason,
     serialize_current_project,
 )
+
+STUDENT_SORT_FIELDS = {"name", "skills", "major", "joined_year"}
 
 
 def _parse_positive_int(value, field_name, default=None, maximum=None):
@@ -25,6 +30,122 @@ def _parse_positive_int(value, field_name, default=None, maximum=None):
     if maximum is not None:
         parsed = min(parsed, maximum)
     return parsed
+
+
+def _parse_sort(value, allowed, default):
+    sort = (value or default).strip().lower()
+    if sort not in allowed:
+        raise ValueError(f"Unsupported sort field: {sort}")
+    return sort
+
+
+def _parse_direction(value):
+    direction = (value or "asc").strip().lower()
+    if direction not in {"asc", "desc"}:
+        raise ValueError("sort order must be asc or desc")
+    return direction
+
+
+def _parse_skill_ids(values):
+    if values in (None, ""):
+        return []
+    if isinstance(values, str):
+        values = [values]
+    result = []
+    for value in values:
+        for part in str(value).split(","):
+            part = part.strip()
+            if part:
+                parsed = _parse_positive_int(part, "skill_id")
+                if parsed not in result:
+                    result.append(parsed)
+    return result
+
+
+def _project_availability_context(viewer, project_id):
+    if project_id in (None, ""):
+        return None
+    project_id = _parse_positive_int(project_id, "project_id")
+    project = db.session.get(Project, project_id)
+    if project is None:
+        raise LookupError("Project not found")
+    enrolled = CourseEnrollment.query.filter_by(
+        student_id=viewer.id, course_id=project.course_id
+    ).first()
+    if enrolled is None:
+        raise PermissionError("You do not have access to this project")
+
+    deadline_passed = bool(project_has_ended(project))
+    enrolled_student_ids = {
+        student_id
+        for (student_id,) in db.session.query(CourseEnrollment.student_id)
+        .filter(CourseEnrollment.course_id == project.course_id)
+        .all()
+    }
+    assigned_student_ids = {
+        student_id
+        for (student_id,) in db.session.query(TeamMember.student_id)
+        .join(Team)
+        .filter(Team.project_id == project_id)
+        .all()
+    }
+    teams = Team.query.filter(Team.project_id == project_id).all()
+    counts = dict(
+        db.session.query(TeamMember.team_id, func.count(TeamMember.id))
+        .filter(TeamMember.team_id.in_([team.id for team in teams]))
+        .group_by(TeamMember.team_id)
+        .all()
+    )
+    open_team_ids = set()
+    for team in teams:
+        status = (team.status or "").strip().lower()
+        if status in CLOSED_TEAM_STATUSES or _team_restriction_reason(team):
+            continue
+        if counts.get(team.id, 0) >= team.project.max_members_per_team:
+            continue
+        open_team_ids.add(team.id)
+
+    return {
+        "project_id": project_id,
+        "deadline_passed": deadline_passed,
+        "enrolled_student_ids": enrolled_student_ids,
+        "assigned_student_ids": assigned_student_ids,
+        "open_team_ids": open_team_ids,
+    }
+
+
+def _availability_for_student(student_id, context):
+    if context is None:
+        return None
+    if context["deadline_passed"]:
+        return {
+            "status": "not_eligible",
+            "label": "Not eligible for this project",
+            "reason": "The project deadline has passed.",
+        }
+    if student_id not in context["enrolled_student_ids"]:
+        return {
+            "status": "not_eligible",
+            "label": "Not eligible for this project",
+            "reason": "Not enrolled in this project's course.",
+        }
+    if student_id in context["assigned_student_ids"]:
+        return {
+            "status": "assigned",
+            "label": "Already assigned to a team",
+            "reason": "This student already belongs to a team in this project.",
+        }
+    if not context["open_team_ids"]:
+        return {
+            "status": "not_eligible",
+            "label": "Not eligible for this project",
+            "reason": "No team has an open spot for this project.",
+        }
+    return {
+        "status": "available",
+        "label": "Available to join a team",
+        "reason": None,
+    }
 
 
 def shared_course_ids(viewer_id, target_id=None):
@@ -52,7 +173,7 @@ def visible_user_ids(viewer_id):
     return ids
 
 
-def serialize_public_student(student, viewer, status=None):
+def serialize_public_student(student, viewer, status=None, availability=None):
     is_self = viewer is not None and viewer.id == student.id
     if status is None:
         status = presence_service.get_status([student.id]).get(str(student.id), {})
@@ -85,6 +206,7 @@ def serialize_public_student(student, viewer, status=None):
         "is_online": status.get("online", False),
         "last_seen": status.get("last_seen"),
         "is_self": is_self,
+        "availability": availability,
     }
     if is_self:
         data["email"] = student.email
@@ -93,16 +215,29 @@ def serialize_public_student(student, viewer, status=None):
     return data
 
 
-def list_students(viewer, *, search=None, skill_id=None, skill=None,
-                  course_id=None, page=1, per_page=12):
+def list_students(viewer, *, search=None, skill_id=None, skill=None, skill_ids=None,
+                  course_id=None, project_id=None, availability=None,
+                  sort="name", order="asc", page=1, per_page=12):
     page = _parse_positive_int(page, "page", default=1)
     per_page = _parse_positive_int(per_page, "per_page", default=12, maximum=50)
     search = search.strip()[:100] if isinstance(search, str) else ""
     skill = skill.strip()[:100] if isinstance(skill, str) else ""
-    if skill_id not in (None, ""):
-        skill_id = _parse_positive_int(skill_id, "skill_id")
+    sort = _parse_sort(sort, STUDENT_SORT_FIELDS, "name")
+    direction = _parse_direction(order)
+    requested_skills = _parse_skill_ids(skill_ids)
+    if skill_id not in (None, "") and not requested_skills:
+        requested_skills = _parse_skill_ids([skill_id])
     if course_id not in (None, ""):
         course_id = _parse_positive_int(course_id, "course_id")
+    availability = (availability or "").strip().lower()
+    if availability and availability not in {"available"}:
+        raise ValueError("Unsupported availability filter")
+
+    context = _project_availability_context(viewer, project_id)
+    if context and course_id is not None:
+        project = db.session.get(Project, context["project_id"])
+        if course_id != project.course_id:
+            raise ValueError("Course does not match the selected project")
 
     shared = shared_course_ids(viewer.id)
     if not shared:
@@ -112,6 +247,15 @@ def list_students(viewer, *, search=None, skill_id=None, skill=None,
             "page": page,
             "per_page": per_page,
             "pages": 0,
+            "filters": {
+                "search": search,
+                "skill_ids": requested_skills,
+                "course_id": course_id,
+                "project_id": context["project_id"] if context else None,
+                "availability": availability,
+                "sort": sort,
+                "order": direction,
+            },
         }
 
     if course_id is not None and course_id not in shared:
@@ -130,12 +274,14 @@ def list_students(viewer, *, search=None, skill_id=None, skill=None,
                 User.first_name.ilike(pattern),
                 User.last_name.ilike(pattern),
                 (User.first_name + " " + User.last_name).ilike(pattern),
+                User.major.ilike(pattern),
+                User.domain.ilike(pattern),
             )
         )
 
-    if skill_id is not None:
+    if requested_skills:
         query = query.join(StudentSkill, StudentSkill.student_id == User.id).filter(
-            StudentSkill.skill_id == skill_id
+            StudentSkill.skill_id.in_(requested_skills)
         )
     elif skill:
         pattern = f"%{skill}%"
@@ -150,9 +296,54 @@ def list_students(viewer, *, search=None, skill_id=None, skill=None,
             CourseEnrollment, CourseEnrollment.student_id == User.id
         ).filter(CourseEnrollment.course_id == course_id)
 
-    query = query.distinct().order_by(
-        User.first_name.asc(), User.last_name.asc(), User.id.asc()
+    if availability == "available" and context is not None:
+        if context["deadline_passed"] or not context["open_team_ids"]:
+            return {
+                "students": [],
+                "total": 0,
+                "page": page,
+                "per_page": per_page,
+                "pages": 0,
+                "filters": {
+                    "search": search,
+                    "skill_ids": requested_skills,
+                    "course_id": course_id,
+                    "project_id": context["project_id"],
+                    "availability": availability,
+                    "sort": sort,
+                    "order": direction,
+                },
+            }
+        enrolled = db.session.query(CourseEnrollment.student_id).filter(
+            CourseEnrollment.course_id == db.session.get(Project, context["project_id"]).course_id
+        )
+        assigned = (
+            db.session.query(TeamMember.student_id)
+            .join(Team)
+            .filter(Team.project_id == context["project_id"])
+        )
+        query = query.filter(User.id.in_(enrolled), ~User.id.in_(assigned))
+
+    skill_count = (
+        db.session.query(func.count(StudentSkill.skill_id))
+        .filter(StudentSkill.student_id == User.id)
+        .correlate(User)
+        .scalar_subquery()
     )
+    sort_column = {
+        "name": [User.first_name, User.last_name, User.id],
+        "skills": [skill_count, User.first_name, User.last_name, User.id],
+        "major": [User.major, User.first_name, User.last_name, User.id],
+        "joined_year": [User.joined_year, User.first_name, User.last_name, User.id],
+    }[sort]
+    order_by = []
+    for index, column in enumerate(sort_column):
+        column_order = direction if index == 0 else "asc"
+        order_by.append(column.asc() if column_order == "asc" else column.desc())
+    query = (query.group_by(User.id) if sort == "skills" else query.distinct()).order_by(
+        *order_by
+    )
+
     pagination = query.paginate(page=page, per_page=per_page, error_out=False)
     if pagination.pages and page > pagination.pages:
         page = pagination.pages
@@ -163,7 +354,10 @@ def list_students(viewer, *, search=None, skill_id=None, skill=None,
     return {
         "students": [
             serialize_public_student(
-                student, viewer, status.get(str(student.id))
+                student,
+                viewer,
+                status.get(str(student.id)),
+                _availability_for_student(student.id, context),
             )
             for student in students
         ],
@@ -171,6 +365,15 @@ def list_students(viewer, *, search=None, skill_id=None, skill=None,
         "page": pagination.page,
         "per_page": per_page,
         "pages": pagination.pages,
+        "filters": {
+            "search": search,
+            "skill_ids": requested_skills,
+            "course_id": course_id,
+            "project_id": context["project_id"] if context else None,
+            "availability": availability,
+            "sort": sort,
+            "order": direction,
+        },
     }
 
 

@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+from flask import current_app
+from sqlalchemy import nullslast, or_
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db
@@ -13,8 +15,33 @@ from app.models.student_dashboard import (
 from app.models.task_collaboration import TaskAttachment, TaskComment
 from app.models.user import User
 from app.realtime import emit_task_event
+from app.services.storage import FILE_RULES
 
 TASK_STATUSES = frozenset({"todo", "in_progress", "review", "done"})
+TASK_SORT_FIELDS = {"created_at", "updated_at", "due_date", "title", "id"}
+
+
+def _positive_int(value, field_name, default=None, maximum=None):
+    if value in (None, ""):
+        if default is None:
+            raise TaskError(f"{field_name} is required")
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise TaskError(f"{field_name} must be a positive integer") from exc
+    if parsed < 1:
+        raise TaskError(f"{field_name} must be a positive integer")
+    return min(parsed, maximum) if maximum is not None else parsed
+
+
+def task_attachment_rules():
+    rule = FILE_RULES["task_attachment"]
+    return {
+        "accepted_extensions": sorted(rule.extensions),
+        "accepted_mime_types": sorted(rule.mime_types),
+        "max_size_bytes": int(current_app.config[rule.limit_config_key]),
+    }
 
 
 class TaskError(Exception):
@@ -226,33 +253,84 @@ def _validate_description(value):
     return value
 
 
-def list_tasks(user, team_id=None):
+def list_tasks(user, team_id=None, *, search=None, status=None, assignee_id=None,
+               project_id=None, sort="created_at", order="desc", page=1,
+               per_page=12, paginate=False):
     if team_id is not None:
-        try:
-            team_id = int(team_id)
-        except (TypeError, ValueError) as exc:
-            raise TaskError("team_id must be an integer") from exc
-
+        team_id = _positive_int(team_id, "team_id")
         team = _load_team(team_id)
         if team is None:
             raise TaskError("Team not found", 404)
         if not can_read_team(user, team):
             raise TaskError("You cannot view tasks for this team", 403)
-
-        tasks = (
-            _task_query()
-            .filter(Task.team_id == team_id)
-            .order_by(Task.id.asc())
-            .all()
-        )
+        query = _task_query().filter(Task.team_id == team_id)
     else:
-        tasks = (
-            _scope_tasks(_task_query(), user)
-            .order_by(Task.id.asc())
-            .all()
+        query = _scope_tasks(_task_query(), user)
+
+    search = search.strip()[:100] if isinstance(search, str) else ""
+    if search:
+        pattern = f"%{search}%"
+        query = query.filter(
+            or_(Task.title.ilike(pattern), Task.description.ilike(pattern))
+        )
+    if status:
+        status = status.strip().lower()
+        if status not in TASK_STATUSES:
+            raise TaskError("Unsupported task status")
+        query = query.filter(Task.status == status)
+    if assignee_id not in (None, "", "all"):
+        if assignee_id == "unassigned":
+            query = query.filter(Task.assignee_id.is_(None))
+        else:
+            query = query.filter(Task.assignee_id == _positive_int(assignee_id, "assignee_id"))
+    if project_id not in (None, "", "all"):
+        query = query.filter(
+            Task.team.has(Team.project_id == _positive_int(project_id, "project_id"))
         )
 
-    return [serialize_task(task) for task in tasks]
+    sort = (sort or "created_at").strip().lower()
+    if sort not in TASK_SORT_FIELDS:
+        raise TaskError(f"Unsupported sort field: {sort}")
+    direction = (order or "desc").strip().lower()
+    if direction not in {"asc", "desc"}:
+        raise TaskError("sort order must be asc or desc")
+    sort_column = {
+        "created_at": Task.created_at,
+        "updated_at": Task.updated_at,
+        "due_date": Task.due_date,
+        "title": Task.title,
+        "id": Task.id,
+    }[sort]
+    order_column = sort_column.asc() if direction == "asc" else sort_column.desc()
+    if sort == "due_date":
+        order_column = nullslast(order_column)
+    query = query.order_by(order_column, Task.id.asc())
+
+    if not paginate:
+        return [serialize_task(task) for task in query.all()]
+
+    page = _positive_int(page, "page", default=1)
+    per_page = _positive_int(per_page, "per_page", default=12, maximum=50)
+    pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+    if pagination.pages and page > pagination.pages:
+        pagination = query.paginate(
+            page=pagination.pages, per_page=per_page, error_out=False
+        )
+    return {
+        "tasks": [serialize_task(task) for task in pagination.items],
+        "total": pagination.total,
+        "page": pagination.page,
+        "per_page": per_page,
+        "pages": pagination.pages,
+        "filters": {
+            "search": search,
+            "status": status or "",
+            "assignee_id": assignee_id or "",
+            "project_id": project_id or "",
+            "sort": sort,
+            "order": direction,
+        },
+    }
 
 
 def create_task(user, data):

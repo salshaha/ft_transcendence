@@ -5,7 +5,8 @@ from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+BE_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = BE_ROOT.parent if BE_ROOT.name == "be" else BE_ROOT
 load_dotenv(PROJECT_ROOT / ".env")
 
 
@@ -34,6 +35,8 @@ FRONTEND_ORIGINS = [
 # In Compose, Flask reaches PostgreSQL through the private service network.
 DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL:
+    if DATABASE_URL.startswith(("postgresql://", "postgres://")):
+        DATABASE_URL = "postgresql+psycopg2://" + DATABASE_URL.split("://", 1)[1]
     SQLALCHEMY_DATABASE_URI = DATABASE_URL
 else:
     db_user = quote_plus(os.environ["POSTGRES_USER"])
@@ -87,9 +90,7 @@ RATELIMIT_APPLICATION = os.getenv(
 RATELIMIT_HEADERS_ENABLED = True
 RATELIMIT_STRATEGY = "fixed-window"
 STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "local").strip().lower()
-STORAGE_ROOT = os.getenv(
-    "STORAGE_ROOT", str(PROJECT_ROOT / "be" / "uploads")
-)
+STORAGE_ROOT = os.getenv("STORAGE_ROOT", str(BE_ROOT / "uploads"))
 STORAGE_MAX_AVATAR_BYTES = env_int(
     "STORAGE_MAX_AVATAR_BYTES", 5 * 1024 * 1024
 )

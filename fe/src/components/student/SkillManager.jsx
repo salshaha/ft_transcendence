@@ -61,7 +61,7 @@ export default function SkillManager({ skills = [], onChanged }) {
       skillId: skill.skill_id || skill.id,
       name: skill.name,
       category: skill.category,
-      proficiency_level: skill.proficiency_level,
+      proficiency_level: Number(skill.proficiency_level) >= 4 ? 4 : skill.proficiency_level,
     });
     setError("");
     setMessage("");

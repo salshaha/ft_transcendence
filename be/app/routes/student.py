@@ -6,16 +6,12 @@ from app.extensions import db
 from app.models.student_dashboard import Course, CourseEnrollment, Project, TeamMember
 from app.services.communication_service import (
     create_team_message,
-    get_friend_overview,
     list_team_chats,
     list_team_messages,
-    remove_friend,
-    respond_friend_request,
-    search_students,
-    send_friend_request,
 )
 from app.services.student_service import (
     create_team,
+    delete_submission,
     get_authenticated_student,
     get_available_teams,
     get_course_project,
@@ -34,6 +30,7 @@ from app.services.student_service import (
     remove_team_member,
     serialize_profile,
     submit_project,
+    switch_team,
     transfer_team_leadership,
 )
 from app.services.peer_feedback_service import (
@@ -80,7 +77,21 @@ def courses():
         return response, status
     search = request.args.get("search", "").strip()
     try:
-        return jsonify({"courses": get_courses(student.id, search or None)}), 200
+        courses = get_courses(
+            student.id,
+            search or None,
+            semester=request.args.get("semester"),
+            academic_year=request.args.get("academic_year"),
+            instructor_id=request.args.get("instructor_id"),
+            sort=request.args.get("sort", "name"),
+            order=request.args.get("order", "asc"),
+            page=request.args.get("page", 1),
+            per_page=request.args.get("per_page", 12),
+            paginate=True,
+        )
+        return jsonify(courses), 200
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
     except SQLAlchemyError:
         return _database_error("Unable to retrieve courses")
 
@@ -111,10 +122,17 @@ def course_teams(course_id):
             project_id=request.args.get("project_id"),
             search=request.args.get("search"),
             availability=request.args.get("availability"),
+            sort=request.args.get("sort", "name"),
+            order=request.args.get("order", "asc"),
+            capacity=request.args.get("capacity", ""),
+            page=request.args.get("page", 1),
+            per_page=request.args.get("per_page", 12),
         )
         if data is None:
             return jsonify({"message": "Course or project not found"}), 404
         return jsonify(data), 200
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
     except SQLAlchemyError:
         return _database_error("Unable to retrieve course teams")
 
@@ -234,6 +252,29 @@ def join_team_route(team_id):
         }), 409
     except SQLAlchemyError:
         return _database_error("Unable to join team")
+
+
+@student_bp.route("/teams/<int:team_id>/switch", methods=["POST"])
+def switch_team_route(team_id):
+    student, response, status = _student_or_response()
+    if response:
+        return response, status
+    try:
+        result = switch_team(student.id, team_id)
+        return jsonify(result), 200
+    except LookupError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({"message": str(exc)}), 403
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({
+            "message": "Unable to switch team because the membership is no longer valid"
+        }), 409
+    except SQLAlchemyError:
+        return _database_error("Unable to switch team")
 
 
 @student_bp.route("/teams/<int:team_id>/leave", methods=["POST"])
@@ -372,6 +413,24 @@ def submit_project_route(team_id):
         return _database_error("Unable to submit project")
 
 
+@student_bp.route("/teams/<int:team_id>/submission", methods=["DELETE"])
+def delete_submission_route(team_id):
+    student, response, status = _student_or_response()
+    if response:
+        return response, status
+    try:
+        result = delete_submission(student.id, team_id)
+        return jsonify(result), 200
+    except PermissionError as exc:
+        return jsonify({"message": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except SQLAlchemyError:
+        return _database_error("Unable to delete submission")
+
+
 @student_bp.route("/teams/<int:team_id>/submission", methods=["GET"])
 def get_submission_route(team_id):
     student, response, status = _student_or_response()
@@ -468,98 +527,6 @@ def grades_route():
         return jsonify(get_my_grades(student.id)), 200
     except SQLAlchemyError:
         return _database_error("Unable to retrieve grades")
-
-
-@student_bp.route("/friends", methods=["GET"])
-def friends_overview():
-    student, response, status = _student_or_response()
-    if response:
-        return response, status
-    try:
-        return jsonify(get_friend_overview(student.id)), 200
-    except SQLAlchemyError as exc:
-        return _database_error("Unable to retrieve friends", exc)
-
-
-@student_bp.route("/friends/search", methods=["GET"])
-def friends_search():
-    student, response, status = _student_or_response()
-    if response:
-        return response, status
-    try:
-        return jsonify(search_students(student.id, request.args.get("search", ""))), 200
-    except SQLAlchemyError as exc:
-        return _database_error("Unable to search students", exc)
-
-
-@student_bp.route("/friends/requests", methods=["POST"])
-def friends_send_request():
-    student, response, status = _student_or_response()
-    if response:
-        return response, status
-    data = request.get_json(silent=True) or {}
-    try:
-        result = send_friend_request(student.id, data.get("recipient_id"))
-        return jsonify(result), 201
-    except LookupError as exc:
-        return jsonify({"message": str(exc)}), 404
-    except PermissionError as exc:
-        return jsonify({"message": str(exc)}), 403
-    except ValueError as exc:
-        return jsonify({"message": str(exc)}), 400
-    except SQLAlchemyError as exc:
-        return _database_error("Unable to send friend request", exc)
-
-
-@student_bp.route("/friends/requests/<int:request_id>/accept", methods=["POST"])
-def friends_accept_request(request_id):
-    student, response, status = _student_or_response()
-    if response:
-        return response, status
-    try:
-        return jsonify(respond_friend_request(student.id, request_id, True)), 200
-    except LookupError as exc:
-        return jsonify({"message": str(exc)}), 404
-    except PermissionError as exc:
-        return jsonify({"message": str(exc)}), 403
-    except ValueError as exc:
-        return jsonify({"message": str(exc)}), 400
-    except SQLAlchemyError as exc:
-        return _database_error("Unable to accept friend request", exc)
-
-
-@student_bp.route("/friends/requests/<int:request_id>/reject", methods=["POST"])
-def friends_reject_request(request_id):
-    student, response, status = _student_or_response()
-    if response:
-        return response, status
-    try:
-        return jsonify(respond_friend_request(student.id, request_id, False)), 200
-    except LookupError as exc:
-        return jsonify({"message": str(exc)}), 404
-    except PermissionError as exc:
-        return jsonify({"message": str(exc)}), 403
-    except ValueError as exc:
-        return jsonify({"message": str(exc)}), 400
-    except SQLAlchemyError as exc:
-        return _database_error("Unable to reject friend request", exc)
-
-
-@student_bp.route("/friends/<int:friend_id>", methods=["DELETE"])
-def friends_remove(friend_id):
-    student, response, status = _student_or_response()
-    if response:
-        return response, status
-    try:
-        return jsonify(remove_friend(student.id, friend_id)), 200
-    except LookupError as exc:
-        return jsonify({"message": str(exc)}), 404
-    except PermissionError as exc:
-        return jsonify({"message": str(exc)}), 403
-    except ValueError as exc:
-        return jsonify({"message": str(exc)}), 400
-    except SQLAlchemyError as exc:
-        return _database_error("Unable to remove friend", exc)
 
 
 @student_bp.route("/projects/<int:project_id>/requirements", methods=["GET"])
