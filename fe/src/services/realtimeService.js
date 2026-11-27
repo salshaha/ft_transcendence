@@ -17,10 +17,6 @@ const EVENTS = [
   "submission_updated",
   "grade_published",
   "message_created",
-  "friend_request_received",
-  "friend_request_accepted",
-  "friend_request_rejected",
-  "friend_removed",
   "team_access_revoked",
 ];
 

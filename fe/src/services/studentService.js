@@ -21,6 +21,10 @@ export function joinStudentTeam(teamId) {
   return apiRequest(`/api/student/teams/${teamId}/join`, { method: "POST" });
 }
 
+export function switchStudentTeam(teamId) {
+  return apiRequest(`/api/student/teams/${teamId}/switch`, { method: "POST" });
+}
+
 export function leaveStudentTeam(teamId) {
   return apiRequest(`/api/student/teams/${teamId}/leave`, { method: "POST" });
 }
@@ -77,7 +81,6 @@ export function createStudentTeam({ projectId, name }) {
 }
 
 export function studentProjectRequirementsUrl(projectId, { download = false } = {}) {
-  const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "");
   const params = download ? "?download=1" : "";
   return `${API_URL}/api/student/projects/${projectId}/requirements${params}`;
 }
@@ -246,7 +249,7 @@ export function submitTeamProject(teamId, file, onProgress, signal) {
 
 export function teamSubmissionFileUrl(teamId, download = false) {
   const params = download ? "?download=1" : "";
-  return `${API_URL}/api/student/teams/${teamId}/submission/file${params}`;
+  return `/api/student/teams/${teamId}/submission/file${params}`;
 }
 
 export function fetchTeamSubmissionFile(teamId, download = false) {
@@ -277,49 +280,5 @@ export function sendTeamMessage(teamId, content) {
     method: "POST",
     payload: { content },
     errorMessage: "Unable to send this message.",
-  });
-}
-
-export function getFriendOverview() {
-  return apiRequest("/api/student/friends", {
-    errorMessage: "Unable to load your friends.",
-  });
-}
-
-export function searchFriends(search = "") {
-  const params = new URLSearchParams();
-  if (search) params.set("search", search);
-  const query = params.toString();
-  return apiRequest(`/api/student/friends/search${query ? `?${query}` : ""}`, {
-    errorMessage: "Unable to search students.",
-  });
-}
-
-export function sendFriendRequest(recipientId) {
-  return apiRequest("/api/student/friends/requests", {
-    method: "POST",
-    payload: { recipient_id: recipientId },
-    errorMessage: "Unable to send this friend request.",
-  });
-}
-
-export function acceptFriendRequest(requestId) {
-  return apiRequest(`/api/student/friends/requests/${requestId}/accept`, {
-    method: "POST",
-    errorMessage: "Unable to accept this friend request.",
-  });
-}
-
-export function rejectFriendRequest(requestId) {
-  return apiRequest(`/api/student/friends/requests/${requestId}/reject`, {
-    method: "POST",
-    errorMessage: "Unable to reject this friend request.",
-  });
-}
-
-export function removeFriend(friendId) {
-  return apiRequest(`/api/student/friends/${friendId}`, {
-    method: "DELETE",
-    errorMessage: "Unable to remove this friend.",
   });
 }

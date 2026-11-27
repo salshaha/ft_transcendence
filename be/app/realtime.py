@@ -176,14 +176,6 @@ def emit_team_message_event(message):
     )
 
 
-def emit_friend_event(action, payload, user_id):
-    emit_to_user(
-        f"friend_{action}",
-        {"action": action, **payload},
-        user_id,
-    )
-
-
 def revoke_team_access(user_id, team_id):
     if user_id is None or team_id is None:
         return

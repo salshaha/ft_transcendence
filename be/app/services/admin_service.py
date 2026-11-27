@@ -88,6 +88,20 @@ def get_analytics(start_value=None, end_value=None):
         current += timedelta(days=1)
 
     activity_count = sum(daily_counts["activity_events"].values())
+
+    # Monthly activity aggregation (activity events grouped by month)
+    monthly_rows = (
+        db.session.query(
+            func.to_char(ActivityEvent.created_at, "YYYY-MM").label("month"),
+            func.count().label("count"),
+        )
+        .filter(ActivityEvent.created_at >= start_at, ActivityEvent.created_at < end_at)
+        .group_by(func.to_char(ActivityEvent.created_at, "YYYY-MM"))
+        .order_by(func.to_char(ActivityEvent.created_at, "YYYY-MM"))
+        .all()
+    )
+    monthly_activity = [{"month": row.month, "count": row.count} for row in monthly_rows]
+
     activity_rows = (
         db.session.query(ActivityEvent, User)
         .outerjoin(User, ActivityEvent.actor_user_id == User.id)
@@ -146,12 +160,13 @@ def get_analytics(start_value=None, end_value=None):
             .all()
         ],
         "activity_count": activity_count,
+        "monthly_activity": monthly_activity,
         "recent_activity": recent_activity,
         "timeline": timeline,
     }
 
 
-def list_users(search=None, role=None):
+def list_users(search=None, role=None, page=1, per_page=50):
     query = User.query
     if role:
         query = query.filter(User.role == role)
@@ -163,19 +178,28 @@ def list_users(search=None, role=None):
             | (User.email.ilike(pattern))
             | (User.student_id.ilike(pattern))
         )
-    users = query.order_by(User.id.asc()).limit(200).all()
-    return [
-        {
-            "id": u.id,
-            "first_name": u.first_name,
-            "last_name": u.last_name,
-            "email": u.email,
-            "role": u.role,
-            "student_id": u.student_id,
-            "profile_picture": u.profile_picture,
-        }
-        for u in users
-    ]
+    total = query.count()
+    per_page = min(max(1, per_page), 200)
+    page = max(1, page)
+    users = query.order_by(User.id.asc()).offset((page - 1) * per_page).limit(per_page).all()
+    return {
+        "users": [
+            {
+                "id": u.id,
+                "first_name": u.first_name,
+                "last_name": u.last_name,
+                "email": u.email,
+                "role": u.role,
+                "student_id": u.student_id,
+                "profile_picture": u.profile_picture,
+            }
+            for u in users
+        ],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "pages": (total + per_page - 1) // per_page,
+    }
 
 
 def create_user_admin(data):

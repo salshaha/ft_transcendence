@@ -284,7 +284,15 @@ def users():
     search = request.args.get("search")
     role = request.args.get("role")
     try:
-        return jsonify({"users": list_users(search=search, role=role)}), 200
+        page = int(request.args.get("page", 1))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        per_page = int(request.args.get("per_page", 50))
+    except (TypeError, ValueError):
+        per_page = 50
+    try:
+        return jsonify(list_users(search=search, role=role, page=page, per_page=per_page)), 200
     except SQLAlchemyError:
         return _database_error("Unable to retrieve users")
 

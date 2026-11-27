@@ -3,7 +3,6 @@ export const PROFICIENCY_LEVELS = [
   { value: 2, label: "Intermediate" },
   { value: 3, label: "Advanced" },
   { value: 4, label: "Expert" },
-  { value: 5, label: "Expert" },
 ];
 
 export function proficiencyLabel(level) {
