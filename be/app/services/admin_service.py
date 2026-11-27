@@ -4,7 +4,14 @@ from sqlalchemy import func
 
 from app.extensions import db
 from app.models.activity_event import ActivityEvent
-from app.models.student_dashboard import Course, CourseEnrollment, Project, Task, Team
+from app.models.student_dashboard import (
+    Course,
+    CourseEnrollment,
+    Project,
+    Task,
+    Team,
+    TeamMember,
+)
 from app.models.submission import Submission
 from app.models.user import User
 from app.services.auth_service import get_authenticated_user
@@ -182,6 +189,15 @@ def list_users(search=None, role=None, page=1, per_page=50):
     per_page = min(max(1, per_page), 200)
     page = max(1, page)
     users = query.order_by(User.id.asc()).offset((page - 1) * per_page).limit(per_page).all()
+    user_ids = [u.id for u in users]
+    course_counts = {}
+    if user_ids:
+        course_counts = dict(
+            db.session.query(Course.instructor_id, func.count(Course.id))
+            .filter(Course.instructor_id.in_(user_ids))
+            .group_by(Course.instructor_id)
+            .all()
+        )
     return {
         "users": [
             {
@@ -192,6 +208,7 @@ def list_users(search=None, role=None, page=1, per_page=50):
                 "role": u.role,
                 "student_id": u.student_id,
                 "profile_picture": u.profile_picture,
+                "course_count": int(course_counts.get(u.id, 0)),
             }
             for u in users
         ],
@@ -222,6 +239,13 @@ def update_user_admin(user_id, data):
     if "role" in data and data.get("role") is not None:
         if data["role"] not in {"student", "instructor", "admin"}:
             raise ValueError("Invalid role")
+        if data["role"] != "instructor":
+            course_count = Course.query.filter_by(instructor_id=user.id).count()
+            if course_count > 0:
+                raise ValueError(
+                    f"Cannot change role: this user is still assigned to {course_count} course(s). "
+                    "Reassign their courses first."
+                )
         user.role = data["role"]
         if user.role != "student":
             user.student_id = None
@@ -236,10 +260,50 @@ def update_user_admin(user_id, data):
     return user
 
 
-def delete_user_admin(user_id):
+def _replacement_task_creator(task, deleting_user_id, actor_user_id):
+    team = task.team
+    if team is not None:
+        if team.leader_id and team.leader_id != deleting_user_id:
+            return team.leader_id
+        other_member = (
+            TeamMember.query.filter(
+                TeamMember.team_id == team.id,
+                TeamMember.student_id != deleting_user_id,
+            )
+            .first()
+        )
+        if other_member is not None:
+            return other_member.student_id
+        if team.project and team.project.course:
+            course_instructor_id = team.project.course.instructor_id
+            if course_instructor_id and course_instructor_id != deleting_user_id:
+                return course_instructor_id
+    if actor_user_id and actor_user_id != deleting_user_id:
+        return actor_user_id
+    return None
+
+
+def delete_user_admin(user_id, actor_user_id=None):
     user = db.session.get(User, user_id)
     if user is None:
         raise LookupError("User not found")
+    if actor_user_id is not None and user.id == actor_user_id:
+        raise ValueError("You cannot delete your own admin account.")
+    course_count = Course.query.filter_by(instructor_id=user.id).count()
+    if course_count > 0:
+        raise ValueError(
+            f"Cannot delete user: they are assigned as instructor to {course_count} course(s). "
+            "Reassign or delete those courses first."
+        )
+
+    for task in Task.query.filter_by(created_by=user.id).all():
+        replacement_id = _replacement_task_creator(task, user.id, actor_user_id)
+        if replacement_id is not None:
+            task.created_by = replacement_id
+        else:
+            db.session.delete(task)
+    db.session.flush()
+
     db.session.delete(user)
     db.session.commit()
     return {"message": "User deleted"}
@@ -266,22 +330,41 @@ def list_courses():
 
 
 def create_course(data):
+    name = (data.get("name") or "").strip() if isinstance(data.get("name"), str) else ""
+    academic_year = (
+        (data.get("academic_year") or "").strip()
+        if isinstance(data.get("academic_year"), str)
+        else ""
+    )
+    semester = (
+        (data.get("semester") or "").strip().lower()
+        if isinstance(data.get("semester"), str)
+        else ""
+    )
+    microsoft_class_id = (
+        (data.get("microsoft_class_id") or "").strip() or None
+        if isinstance(data.get("microsoft_class_id"), str)
+        else None
+    )
     instructor_id = data.get("instructor_id")
-    if instructor_id is not None:
-        instructor = User.query.filter_by(id=instructor_id, role="instructor").first()
-        if instructor is None:
-            raise ValueError("Instructor not found")
+    if not name or not academic_year or not semester:
+        raise ValueError("name, academic_year and semester are required")
+    if semester not in {"fall", "spring", "summer"}:
+        raise ValueError("Invalid semester")
+    if instructor_id is None:
+        raise ValueError("Instructor is required")
+    instructor = User.query.filter_by(id=instructor_id, role="instructor").first()
+    if instructor is None:
+        raise ValueError("Instructor not found")
+    if microsoft_class_id and Course.query.filter_by(microsoft_class_id=microsoft_class_id).first():
+        raise ValueError("Microsoft Class ID is already in use")
     course = Course(
         instructor_id=instructor_id,
-        name=data.get("name"),
-        academic_year=data.get("academic_year"),
-        semester=data.get("semester"),
-        microsoft_class_id=data.get("microsoft_class_id"),
+        name=name,
+        academic_year=academic_year,
+        semester=semester,
+        microsoft_class_id=microsoft_class_id,
     )
-    if not course.name or not course.academic_year or not course.semester:
-        raise ValueError("name, academic_year and semester are required")
-    if course.semester not in {"fall", "spring", "summer"}:
-        raise ValueError("Invalid semester")
     db.session.add(course)
     db.session.commit()
     return course
@@ -292,13 +375,28 @@ def update_course(course_id, data):
     if course is None:
         raise LookupError("Course not found")
     if "name" in data and data.get("name") is not None:
-        course.name = data["name"]
+        name = data["name"].strip() if isinstance(data["name"], str) else ""
+        if not name:
+            raise ValueError("name cannot be empty")
+        course.name = name
     if "academic_year" in data and data.get("academic_year") is not None:
-        course.academic_year = data["academic_year"]
+        academic_year = (
+            data["academic_year"].strip()
+            if isinstance(data["academic_year"], str)
+            else ""
+        )
+        if not academic_year:
+            raise ValueError("academic_year cannot be empty")
+        course.academic_year = academic_year
     if "semester" in data and data.get("semester") is not None:
-        if data["semester"] not in {"fall", "spring", "summer"}:
+        semester = (
+            data["semester"].strip().lower()
+            if isinstance(data["semester"], str)
+            else ""
+        )
+        if semester not in {"fall", "spring", "summer"}:
             raise ValueError("Invalid semester")
-        course.semester = data["semester"]
+        course.semester = semester
     if "instructor_id" in data:
         iid = data.get("instructor_id")
         if iid is None:
@@ -308,7 +406,20 @@ def update_course(course_id, data):
             raise ValueError("Instructor not found")
         course.instructor_id = iid
     if "microsoft_class_id" in data:
-        course.microsoft_class_id = data.get("microsoft_class_id")
+        raw_class_id = data.get("microsoft_class_id")
+        class_id = (
+            raw_class_id.strip() or None
+            if isinstance(raw_class_id, str)
+            else None
+        )
+        if class_id:
+            conflict = Course.query.filter(
+                Course.microsoft_class_id == class_id,
+                Course.id != course.id,
+            ).first()
+            if conflict is not None:
+                raise ValueError("Microsoft Class ID is already in use")
+        course.microsoft_class_id = class_id
     db.session.commit()
     return course
 

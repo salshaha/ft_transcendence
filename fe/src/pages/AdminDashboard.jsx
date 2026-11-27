@@ -17,6 +17,75 @@ import {
   subscribeToAdminAnalytics,
 } from "../services/adminService";
 
+const VALID_SEMESTERS = new Set(["fall", "spring", "summer"]);
+
+function validateCourseForm(form, courses, instructors, editingCourseId) {
+  const actionVerb = editingCourseId ? "updated" : "created";
+  const name = String(form.name || "").trim();
+  const academicYear = String(form.academic_year || "").trim();
+  const semester = String(form.semester || "").trim().toLowerCase();
+  const instructorRaw = String(form.instructor_id ?? "").trim();
+  const microsoftClassId = String(form.microsoft_class_id || "").trim();
+
+  const missing = [];
+  if (!name) missing.push("Name");
+  if (!academicYear) missing.push("Academic year");
+  if (!semester) missing.push("Semester");
+  if (!instructorRaw) missing.push("Instructor");
+
+  if (missing.length > 0) {
+    return {
+      error: `Course cannot be ${actionVerb}. Please fill in: ${missing.join(", ")}.`,
+    };
+  }
+  if (academicYear.length > 20) {
+    return {
+      error: `Course cannot be ${actionVerb}. Academic year must be 20 characters or fewer.`,
+    };
+  }
+  if (!VALID_SEMESTERS.has(semester)) {
+    return {
+      error: `Course cannot be ${actionVerb}. Please select a valid semester.`,
+    };
+  }
+  const instructorId = Number(instructorRaw);
+  if (!Number.isInteger(instructorId) || instructorId <= 0) {
+    return {
+      error: `Course cannot be ${actionVerb}. Please select a valid instructor.`,
+    };
+  }
+  if (
+    instructors.length > 0 &&
+    !instructors.some((instructor) => Number(instructor.id) === instructorId)
+  ) {
+    return {
+      error: `Course cannot be ${actionVerb}. Selected instructor was not found.`,
+    };
+  }
+  if (
+    microsoftClassId &&
+    courses.some(
+      (course) =>
+        course.id !== editingCourseId &&
+        course.microsoft_class_id === microsoftClassId,
+    )
+  ) {
+    return {
+      error: `Course cannot be ${actionVerb}. Microsoft Class ID "${microsoftClassId}" is already used by another course.`,
+    };
+  }
+
+  return {
+    payload: {
+      name,
+      academic_year: academicYear,
+      semester,
+      instructor_id: instructorId,
+      microsoft_class_id: microsoftClassId || null,
+    },
+  };
+}
+
 const SERIES = {
   users: { label: "New accounts", color: "#0f766e" },
   teams: { label: "Teams created", color: "#2563eb" },
@@ -169,6 +238,8 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
   const [dataMessage, setDataMessage] = useState("");
   const [liveStatus, setLiveStatus] = useState("connecting");
   const refreshRef = useRef(null);
+  const analyticsConnectionRef = useRef(null);
+  const loggingOutRef = useRef(false);
 
   // Users
   const [users, setUsers] = useState([]);
@@ -183,10 +254,12 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
   const [newUserForm, setNewUserForm] = useState({ first_name: "", last_name: "", email: "", password: "", role: "student", student_id: "" });
   const [savingNewUser, setSavingNewUser] = useState(false);
   const [userMessage, setUserMessage] = useState("");
+  const [userFormError, setUserFormError] = useState("");
   const [deletingUserId, setDeletingUserId] = useState(null);
 
   // Courses
   const [courses, setCourses] = useState([]);
+  const [instructors, setInstructors] = useState([]);
   const [coursesLoading, setCoursesLoading] = useState(false);
   const [coursesError, setCoursesError] = useState("");
   const [creatingCourse, setCreatingCourse] = useState(false);
@@ -194,6 +267,7 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
   const [courseForm, setCourseForm] = useState({ name: "", academic_year: "", semester: "fall", instructor_id: "", microsoft_class_id: "" });
   const [savingCourse, setSavingCourse] = useState(false);
   const [courseMessage, setCourseMessage] = useState("");
+  const [courseFormError, setCourseFormError] = useState("");
   const [deletingCourseId, setDeletingCourseId] = useState(null);
 
   const range = useMemo(() => ({ start_date: startDate, end_date: endDate }), [startDate, endDate]);
@@ -245,30 +319,33 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
       .finally(() => setCoursesLoading(false));
   }, []);
 
-  // Load courses
+  // Load courses and instructors
   useEffect(() => {
     if (active !== "courses") return;
     loadCourses();
+    getAdminUsers({ role: "instructor", perPage: 100 })
+      .then((data) => setInstructors(data.users || []))
+      .catch(() => {});
   }, [active, loadCourses]);
 
   async function handleCreateCourse() {
+    const validation = validateCourseForm(courseForm, courses, instructors, null);
+    if (validation.error) {
+      setCourseFormError(validation.error);
+      return;
+    }
     setSavingCourse(true);
     setCourseMessage("");
+    setCourseFormError("");
     try {
-      await createAdminCourse({
-        name: courseForm.name,
-        academic_year: courseForm.academic_year,
-        semester: courseForm.semester,
-        instructor_id: courseForm.instructor_id ? Number(courseForm.instructor_id) : null,
-        microsoft_class_id: courseForm.microsoft_class_id || null,
-      });
+      await createAdminCourse(validation.payload);
       setCreatingCourse(false);
       setCourseForm({ name: "", academic_year: "", semester: "fall", instructor_id: "", microsoft_class_id: "" });
       setCourseMessage("Course created successfully.");
       loadCourses();
       getAdminDashboard().then(setStats).catch(() => {});
     } catch (requestError) {
-      setCourseMessage(requestError.message);
+      setCourseFormError(requestError.message);
     } finally {
       setSavingCourse(false);
     }
@@ -276,22 +353,22 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
 
   async function handleUpdateCourse() {
     if (!editingCourse) return;
+    const validation = validateCourseForm(courseForm, courses, instructors, editingCourse);
+    if (validation.error) {
+      setCourseFormError(validation.error);
+      return;
+    }
     setSavingCourse(true);
     setCourseMessage("");
+    setCourseFormError("");
     try {
-      await updateAdminCourse(editingCourse, {
-        name: courseForm.name,
-        academic_year: courseForm.academic_year,
-        semester: courseForm.semester,
-        instructor_id: courseForm.instructor_id ? Number(courseForm.instructor_id) : null,
-        microsoft_class_id: courseForm.microsoft_class_id || null,
-      });
+      await updateAdminCourse(editingCourse, validation.payload);
       setEditingCourse(null);
       setCourseForm({ name: "", academic_year: "", semester: "fall", instructor_id: "", microsoft_class_id: "" });
       setCourseMessage("Course updated successfully.");
       loadCourses();
     } catch (requestError) {
-      setCourseMessage(requestError.message);
+      setCourseFormError(requestError.message);
     } finally {
       setSavingCourse(false);
     }
@@ -323,17 +400,23 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
       microsoft_class_id: c.microsoft_class_id || "",
     });
     setCourseMessage("");
+    setCourseFormError("");
   }
 
   // Analytics
   const refresh = useCallback(async (showLoading = false) => {
+    if (loggingOutRef.current) return;
     if (showLoading) setAnalyticsLoading(true);
     try {
       const next = await getAdminAnalytics(range);
-      setAnalyticsData(next);
-      setAnalyticsError("");
+      if (!loggingOutRef.current) {
+        setAnalyticsData(next);
+        setAnalyticsError("");
+      }
     } catch (requestError) {
-      setAnalyticsError(requestError.message);
+      if (!loggingOutRef.current) {
+        setAnalyticsError(requestError.message);
+      }
     } finally {
       if (showLoading) setAnalyticsLoading(false);
     }
@@ -351,17 +434,37 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
   useEffect(() => {
     if (active !== "analytics") return;
     const connection = subscribeToAdminAnalytics(
-      () => refreshRef.current?.(),
+      () => {
+        if (!loggingOutRef.current) refreshRef.current?.();
+      },
       setLiveStatus,
     );
+    analyticsConnectionRef.current = connection;
     const fallbackTimer = window.setInterval(() => {
-      if (!connection.isConnected()) refreshRef.current?.();
+      if (!loggingOutRef.current && !connection.isConnected()) {
+        refreshRef.current?.();
+      }
     }, 30000);
     return () => {
       window.clearInterval(fallbackTimer);
+      if (analyticsConnectionRef.current === connection) {
+        analyticsConnectionRef.current = null;
+      }
       connection.close();
     };
   }, [active]);
+
+  async function handleSignOut() {
+    loggingOutRef.current = true;
+    analyticsConnectionRef.current?.close();
+    analyticsConnectionRef.current = null;
+    try {
+      await onLogout?.();
+    } catch (error) {
+      loggingOutRef.current = false;
+      throw error;
+    }
+  }
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
@@ -460,19 +563,39 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
       student_id: u.student_id || "",
     });
     setUserMessage("");
+    setUserFormError("");
   }
 
   async function saveEditUser() {
     if (!editingUser) return;
+    const editingTarget = users.find((u) => u.id === editingUser);
+    const firstName = String(editForm.first_name || "").trim();
+    const lastName = String(editForm.last_name || "").trim();
+    const email = String(editForm.email || "").trim();
+    const missing = [];
+    if (!firstName) missing.push("First name");
+    if (!lastName) missing.push("Last name");
+    if (!email) missing.push("Email");
+    if (missing.length > 0) {
+      setUserFormError(`User cannot be updated. Please fill in: ${missing.join(", ")}.`);
+      return;
+    }
+    if ((editingTarget?.course_count || 0) > 0 && editForm.role !== "instructor") {
+      setUserFormError(
+        `Cannot change role: this instructor is assigned to ${editingTarget.course_count} course(s). Reassign their courses first.`,
+      );
+      return;
+    }
     setSavingUser(true);
     setUserMessage("");
+    setUserFormError("");
     try {
       await updateAdminUser(editingUser, {
-        first_name: editForm.first_name,
-        last_name: editForm.last_name,
-        email: editForm.email,
+        first_name: firstName,
+        last_name: lastName,
+        email,
         role: editForm.role,
-        student_id: editForm.student_id || null,
+        student_id: editForm.role === "student" ? (editForm.student_id || null) : null,
       });
       setEditingUser(null);
       setUserMessage("User updated successfully.");
@@ -480,23 +603,37 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
       // Refresh stats
       getAdminDashboard().then(setStats).catch(() => {});
     } catch (requestError) {
-      setUserMessage(requestError.message);
+      setUserFormError(requestError.message);
     } finally {
       setSavingUser(false);
     }
   }
 
   async function handleCreateUser() {
+    const firstName = String(newUserForm.first_name || "").trim();
+    const lastName = String(newUserForm.last_name || "").trim();
+    const email = String(newUserForm.email || "").trim();
+    const password = String(newUserForm.password || "");
+    const missing = [];
+    if (!firstName) missing.push("First name");
+    if (!lastName) missing.push("Last name");
+    if (!email) missing.push("Email");
+    if (!password) missing.push("Password");
+    if (missing.length > 0) {
+      setUserFormError(`User cannot be created. Please fill in: ${missing.join(", ")}.`);
+      return;
+    }
     setSavingNewUser(true);
     setUserMessage("");
+    setUserFormError("");
     try {
       await createAdminUser({
-        first_name: newUserForm.first_name,
-        last_name: newUserForm.last_name,
-        email: newUserForm.email,
-        password: newUserForm.password,
+        first_name: firstName,
+        last_name: lastName,
+        email,
+        password,
         role: newUserForm.role,
-        student_id: newUserForm.student_id || null,
+        student_id: newUserForm.role === "student" ? (newUserForm.student_id || null) : null,
       });
       setCreatingUser(false);
       setNewUserForm({ first_name: "", last_name: "", email: "", password: "", role: "student", student_id: "" });
@@ -504,13 +641,27 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
       loadUsers();
       getAdminDashboard().then(setStats).catch(() => {});
     } catch (requestError) {
-      setUserMessage(requestError.message);
+      setUserFormError(requestError.message);
     } finally {
       setSavingNewUser(false);
     }
   }
 
   async function handleDeleteUser(userId) {
+    const targetUser = users.find((u) => u.id === userId);
+    if (userId === user?.id) {
+      setUserMessage("You cannot delete your own admin account.");
+      return;
+    }
+    if ((targetUser?.course_count || 0) > 0) {
+      const label =
+        `${targetUser.first_name || ""} ${targetUser.last_name || ""}`.trim() ||
+        targetUser.email;
+      setUserMessage(
+        `Cannot delete ${label}: they are assigned as instructor to ${targetUser.course_count} course(s). Reassign or delete those courses first.`,
+      );
+      return;
+    }
     if (!window.confirm("Delete this user? This cannot be undone.")) return;
     setDeletingUserId(userId);
     setUserMessage("");
@@ -571,7 +722,7 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
                 <div className="truncate text-sm font-semibold">{user?.full_name || `${user?.first_name} ${user?.last_name}`}</div>
                 <div className="truncate text-[11px] text-white/50">{user?.email}</div>
               </div>
-              <button className={`rounded-lg p-1.5 text-white/50 transition hover:bg-white/10 hover:text-white ${sidebarCollapsed ? "lg:hidden" : ""}`} aria-label="Sign out" onClick={onLogout}>
+              <button className={`rounded-lg p-1.5 text-white/50 transition hover:bg-white/10 hover:text-white ${sidebarCollapsed ? "lg:hidden" : ""}`} aria-label="Sign out" onClick={handleSignOut}>
                 <Icon name="logout" className="h-4 w-4" />
               </button>
             </div>
@@ -621,7 +772,7 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
                     </select>
                   </label>
                   <button onClick={loadUsers} className="rounded-lg bg-[#075e54] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#064e46]">Search</button>
-                  <button onClick={() => setCreatingUser(true)} className="rounded-lg border border-[#cdded9] bg-white px-4 py-2.5 text-sm font-semibold text-[#28675d] hover:bg-[#f8fbfa]">+ Add user</button>
+                  <button onClick={() => { setCreatingUser(true); setUserFormError(""); setUserMessage(""); }} className="rounded-lg border border-[#cdded9] bg-white px-4 py-2.5 text-sm font-semibold text-[#28675d] hover:bg-[#f8fbfa]">+ Add user</button>
                 </div>
                 {userMessage && <p className="mb-4 rounded-xl border border-[#135D66]/15 bg-[#E3FEF7] px-4 py-3 text-sm font-semibold text-[#135D66]" role="status">{userMessage}</p>}
                 {usersError && <p className="mb-4 rounded-xl border border-[#f0d2d2] bg-white p-4 text-sm text-[#a94646]" role="alert">{usersError}</p>}
@@ -670,62 +821,88 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
 
                 {/* Create user modal */}
                 {creatingUser && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setCreatingUser(false)}>
-                    <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => { setCreatingUser(false); setUserFormError(""); }}>
+                    <form
+                      noValidate
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        handleCreateUser();
+                      }}
+                      className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <h2 className="mb-4 text-lg font-bold text-[#003C43]">Create user</h2>
+                      {userFormError && (
+                        <p className="mb-4 rounded-xl border border-[#f0d2d2] bg-[#fff5f5] px-3 py-2.5 text-xs font-semibold text-[#a94646]" role="alert">
+                          {userFormError}
+                        </p>
+                      )}
                       <div className="space-y-3">
-                        <label className="block text-xs font-semibold text-[#56736d]">First name<input value={newUserForm.first_name} onChange={(e) => setNewUserForm({ ...newUserForm, first_name: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
-                        <label className="block text-xs font-semibold text-[#56736d]">Last name<input value={newUserForm.last_name} onChange={(e) => setNewUserForm({ ...newUserForm, last_name: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
-                        <label className="block text-xs font-semibold text-[#56736d]">Email<input type="email" value={newUserForm.email} onChange={(e) => setNewUserForm({ ...newUserForm, email: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
-                        <label className="block text-xs font-semibold text-[#56736d]">Password<input type="password" value={newUserForm.password} onChange={(e) => setNewUserForm({ ...newUserForm, password: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
+                        <label className="block text-xs font-semibold text-[#56736d]">First name<input value={newUserForm.first_name} onChange={(e) => { setNewUserForm({ ...newUserForm, first_name: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
+                        <label className="block text-xs font-semibold text-[#56736d]">Last name<input value={newUserForm.last_name} onChange={(e) => { setNewUserForm({ ...newUserForm, last_name: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
+                        <label className="block text-xs font-semibold text-[#56736d]">Email<input type="email" value={newUserForm.email} onChange={(e) => { setNewUserForm({ ...newUserForm, email: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
+                        <label className="block text-xs font-semibold text-[#56736d]">Password<input type="password" value={newUserForm.password} onChange={(e) => { setNewUserForm({ ...newUserForm, password: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
                         <label className="block text-xs font-semibold text-[#56736d]">
                           Role
-                          <select value={newUserForm.role} onChange={(e) => setNewUserForm({ ...newUserForm, role: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm">
+                          <select value={newUserForm.role} onChange={(e) => { setNewUserForm({ ...newUserForm, role: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm">
                             <option value="student">Student</option>
                             <option value="instructor">Instructor</option>
                             <option value="admin">Admin</option>
                           </select>
                         </label>
                         {newUserForm.role === "student" && (
-                          <label className="block text-xs font-semibold text-[#56736d]">Student ID<input value={newUserForm.student_id} onChange={(e) => setNewUserForm({ ...newUserForm, student_id: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
+                          <label className="block text-xs font-semibold text-[#56736d]">Student ID<input value={newUserForm.student_id} onChange={(e) => { setNewUserForm({ ...newUserForm, student_id: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
                         )}
                       </div>
                       <div className="mt-5 flex justify-end gap-2">
-                        <button onClick={() => setCreatingUser(false)} className="rounded-lg border border-[#cdded9] bg-white px-4 py-2 text-sm font-semibold text-[#28675d] hover:bg-[#f8fbfa]">Cancel</button>
-                        <button onClick={handleCreateUser} disabled={savingNewUser} className="rounded-lg bg-[#075e54] px-4 py-2 text-sm font-semibold text-white hover:bg-[#064e46] disabled:opacity-50">
+                        <button type="button" onClick={() => { setCreatingUser(false); setUserFormError(""); }} className="rounded-lg border border-[#cdded9] bg-white px-4 py-2 text-sm font-semibold text-[#28675d] hover:bg-[#f8fbfa]">Cancel</button>
+                        <button type="submit" disabled={savingNewUser} className="rounded-lg bg-[#075e54] px-4 py-2 text-sm font-semibold text-white hover:bg-[#064e46] disabled:opacity-50">
                           {savingNewUser ? "Creating…" : "Create"}
                         </button>
                       </div>
-                    </div>
+                    </form>
                   </div>
                 )}
 
                 {/* Edit user modal */}
                 {editingUser && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setEditingUser(null)}>
-                    <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => { setEditingUser(null); setUserFormError(""); }}>
+                    <form
+                      noValidate
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        saveEditUser();
+                      }}
+                      className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <h2 className="mb-4 text-lg font-bold text-[#003C43]">Edit user</h2>
+                      {userFormError && (
+                        <p className="mb-4 rounded-xl border border-[#f0d2d2] bg-[#fff5f5] px-3 py-2.5 text-xs font-semibold text-[#a94646]" role="alert">
+                          {userFormError}
+                        </p>
+                      )}
                       <div className="space-y-3">
-                        <label className="block text-xs font-semibold text-[#56736d]">First name<input value={editForm.first_name} onChange={(e) => setEditForm({ ...editForm, first_name: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
-                        <label className="block text-xs font-semibold text-[#56736d]">Last name<input value={editForm.last_name} onChange={(e) => setEditForm({ ...editForm, last_name: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
-                        <label className="block text-xs font-semibold text-[#56736d]">Email<input value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
+                        <label className="block text-xs font-semibold text-[#56736d]">First name<input value={editForm.first_name} onChange={(e) => { setEditForm({ ...editForm, first_name: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
+                        <label className="block text-xs font-semibold text-[#56736d]">Last name<input value={editForm.last_name} onChange={(e) => { setEditForm({ ...editForm, last_name: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
+                        <label className="block text-xs font-semibold text-[#56736d]">Email<input value={editForm.email} onChange={(e) => { setEditForm({ ...editForm, email: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
                         <label className="block text-xs font-semibold text-[#56736d]">
                           Role
-                          <select value={editForm.role} onChange={(e) => setEditForm({ ...editForm, role: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm">
+                          <select value={editForm.role} onChange={(e) => { setEditForm({ ...editForm, role: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm">
                             <option value="student">Student</option>
                             <option value="instructor">Instructor</option>
                             <option value="admin">Admin</option>
                           </select>
                         </label>
-                        <label className="block text-xs font-semibold text-[#56736d]">Student ID<input value={editForm.student_id} onChange={(e) => setEditForm({ ...editForm, student_id: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
+                        <label className="block text-xs font-semibold text-[#56736d]">Student ID<input value={editForm.student_id} onChange={(e) => { setEditForm({ ...editForm, student_id: e.target.value }); setUserFormError(""); }} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
                       </div>
                       <div className="mt-5 flex justify-end gap-2">
-                        <button onClick={() => setEditingUser(null)} className="rounded-lg border border-[#cdded9] bg-white px-4 py-2 text-sm font-semibold text-[#28675d] hover:bg-[#f8fbfa]">Cancel</button>
-                        <button onClick={saveEditUser} disabled={savingUser} className="rounded-lg bg-[#075e54] px-4 py-2 text-sm font-semibold text-white hover:bg-[#064e46] disabled:opacity-50">
+                        <button type="button" onClick={() => { setEditingUser(null); setUserFormError(""); }} className="rounded-lg border border-[#cdded9] bg-white px-4 py-2 text-sm font-semibold text-[#28675d] hover:bg-[#f8fbfa]">Cancel</button>
+                        <button type="submit" disabled={savingUser} className="rounded-lg bg-[#075e54] px-4 py-2 text-sm font-semibold text-white hover:bg-[#064e46] disabled:opacity-50">
                           {savingUser ? "Saving…" : "Save"}
                         </button>
                       </div>
-                    </div>
+                    </form>
                   </div>
                 )}
               </>
@@ -740,7 +917,7 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
                     <h1 className="mt-2 text-2xl font-extrabold tracking-tight text-[#003C43] sm:text-[30px]">Courses</h1>
                     <p className="mt-2 text-sm leading-6 text-[#6d898b]">View all courses, instructors, and enrollment counts.</p>
                   </div>
-                  <button onClick={() => { setCreatingCourse(true); setCourseForm({ name: "", academic_year: "", semester: "fall", instructor_id: "", microsoft_class_id: "" }); setCourseMessage(""); }} className="rounded-lg border border-[#cdded9] bg-white px-4 py-2.5 text-sm font-semibold text-[#28675d] hover:bg-[#f8fbfa]">+ Add course</button>
+                  <button onClick={() => { setCreatingCourse(true); setCourseForm({ name: "", academic_year: "", semester: "fall", instructor_id: "", microsoft_class_id: "" }); setCourseMessage(""); setCourseFormError(""); }} className="rounded-lg border border-[#cdded9] bg-white px-4 py-2.5 text-sm font-semibold text-[#28675d] hover:bg-[#f8fbfa]">+ Add course</button>
                 </div>
                 {courseMessage && <p className="mb-4 rounded-xl border border-[#135D66]/15 bg-[#E3FEF7] px-4 py-3 text-sm font-semibold text-[#135D66]" role="status">{courseMessage}</p>}
                 {coursesError && <p className="mb-4 rounded-xl border border-[#f0d2d2] bg-white p-4 text-sm text-[#a94646]" role="alert">{coursesError}</p>}
@@ -782,30 +959,114 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
                 )}
                 {/* Create/Edit course modal */}
                 {(creatingCourse || editingCourse) && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => { setCreatingCourse(false); setEditingCourse(null); }}>
-                    <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => { setCreatingCourse(false); setEditingCourse(null); setCourseFormError(""); }}>
+                    <form
+                      noValidate
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (editingCourse) handleUpdateCourse();
+                        else handleCreateCourse();
+                      }}
+                      className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <h2 className="mb-4 text-lg font-bold text-[#003C43]">{editingCourse ? "Edit course" : "Create course"}</h2>
+                      {courseFormError && (
+                        <p className="mb-4 rounded-xl border border-[#f0d2d2] bg-[#fff5f5] px-3 py-2.5 text-xs font-semibold text-[#a94646]" role="alert">
+                          {courseFormError}
+                        </p>
+                      )}
                       <div className="space-y-3">
-                        <label className="block text-xs font-semibold text-[#56736d]">Name<input value={courseForm.name} onChange={(e) => setCourseForm({ ...courseForm, name: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
-                        <label className="block text-xs font-semibold text-[#56736d]">Academic year<input value={courseForm.academic_year} onChange={(e) => setCourseForm({ ...courseForm, academic_year: e.target.value })} placeholder="2025/2026" className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
                         <label className="block text-xs font-semibold text-[#56736d]">
-                          Semester
-                          <select value={courseForm.semester} onChange={(e) => setCourseForm({ ...courseForm, semester: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm">
+                          Name *
+                          <input
+                            value={courseForm.name}
+                            onChange={(e) => {
+                              setCourseForm({ ...courseForm, name: e.target.value });
+                              setCourseFormError("");
+                            }}
+                            placeholder="e.g. Software Engineering"
+                            className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm"
+                          />
+                        </label>
+                        <label className="block text-xs font-semibold text-[#56736d]">
+                          Academic year *
+                          <input
+                            value={courseForm.academic_year}
+                            onChange={(e) => {
+                              setCourseForm({ ...courseForm, academic_year: e.target.value });
+                              setCourseFormError("");
+                            }}
+                            placeholder="2025/2026"
+                            className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm"
+                          />
+                        </label>
+                        <label className="block text-xs font-semibold text-[#56736d]">
+                          Semester *
+                          <select
+                            value={courseForm.semester}
+                            onChange={(e) => {
+                              setCourseForm({ ...courseForm, semester: e.target.value });
+                              setCourseFormError("");
+                            }}
+                            className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm"
+                          >
                             <option value="fall">Fall</option>
                             <option value="spring">Spring</option>
                             <option value="summer">Summer</option>
                           </select>
                         </label>
-                        <label className="block text-xs font-semibold text-[#56736d]">Instructor ID<input type="number" value={courseForm.instructor_id} onChange={(e) => setCourseForm({ ...courseForm, instructor_id: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
-                        <label className="block text-xs font-semibold text-[#56736d]">Microsoft Class ID<input value={courseForm.microsoft_class_id} onChange={(e) => setCourseForm({ ...courseForm, microsoft_class_id: e.target.value })} className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm" /></label>
+                        <label className="block text-xs font-semibold text-[#56736d]">
+                          Instructor *
+                          {instructors.length > 0 ? (
+                            <select
+                              value={courseForm.instructor_id}
+                              onChange={(e) => {
+                                setCourseForm({ ...courseForm, instructor_id: e.target.value });
+                                setCourseFormError("");
+                              }}
+                              className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm"
+                            >
+                              <option value="">Select an instructor…</option>
+                              {instructors.map((instructor) => (
+                                <option key={instructor.id} value={String(instructor.id)}>
+                                  {instructor.full_name || `${instructor.first_name || ""} ${instructor.last_name || ""}`.trim() || instructor.email} (ID: {instructor.id})
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="number"
+                              min="1"
+                              value={courseForm.instructor_id}
+                              onChange={(e) => {
+                                setCourseForm({ ...courseForm, instructor_id: e.target.value });
+                                setCourseFormError("");
+                              }}
+                              placeholder="Instructor user ID"
+                              className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm"
+                            />
+                          )}
+                        </label>
+                        <label className="block text-xs font-semibold text-[#56736d]">
+                          Microsoft Class ID (optional)
+                          <input
+                            value={courseForm.microsoft_class_id}
+                            onChange={(e) => {
+                              setCourseForm({ ...courseForm, microsoft_class_id: e.target.value });
+                              setCourseFormError("");
+                            }}
+                            className="mt-1 w-full rounded-lg border border-[#dce7e3] px-3 py-2 text-sm"
+                          />
+                        </label>
                       </div>
                       <div className="mt-5 flex justify-end gap-2">
-                        <button onClick={() => { setCreatingCourse(false); setEditingCourse(null); }} className="rounded-lg border border-[#cdded9] bg-white px-4 py-2 text-sm font-semibold text-[#28675d] hover:bg-[#f8fbfa]">Cancel</button>
-                        <button onClick={editingCourse ? handleUpdateCourse : handleCreateCourse} disabled={savingCourse} className="rounded-lg bg-[#075e54] px-4 py-2 text-sm font-semibold text-white hover:bg-[#064e46] disabled:opacity-50">
+                        <button type="button" onClick={() => { setCreatingCourse(false); setEditingCourse(null); setCourseFormError(""); }} className="rounded-lg border border-[#cdded9] bg-white px-4 py-2 text-sm font-semibold text-[#28675d] hover:bg-[#f8fbfa]">Cancel</button>
+                        <button type="submit" disabled={savingCourse} className="rounded-lg bg-[#075e54] px-4 py-2 text-sm font-semibold text-white hover:bg-[#064e46] disabled:opacity-50">
                           {savingCourse ? "Saving…" : (editingCourse ? "Update" : "Create")}
                         </button>
                       </div>
-                    </div>
+                    </form>
                   </div>
                 )}
               </>
@@ -816,7 +1077,7 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
               <>
                 <header className="mb-8 flex flex-wrap items-start justify-between gap-4">
                   <div><p className="mb-2 text-xs font-bold uppercase tracking-[.18em] text-[#4f8980]">Platform overview</p><h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Analytics dashboard</h1><p className="mt-2 text-sm text-[#718b85]">Platform activity, engagement, and key metrics at a glance.</p></div>
-                  <button onClick={onLogout} className="rounded-xl border border-[#d8e5e1] bg-white px-4 py-2.5 text-sm font-semibold text-[#41615b] hover:bg-[#f8fbfa]">Sign out</button>
+                  <button onClick={handleSignOut} className="rounded-xl border border-[#d8e5e1] bg-white px-4 py-2.5 text-sm font-semibold text-[#41615b] hover:bg-[#f8fbfa]">Sign out</button>
                 </header>
                 {statsError && <p className="mb-5 rounded-xl border border-[#f0d2d2] bg-white p-4 text-sm text-[#a94646]" role="alert">{statsError}</p>}
                 {statsLoading ? <p className="py-10 text-center text-sm text-[#718b85]" role="status">Loading stats…</p> : (
@@ -910,7 +1171,7 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
                     <h2 className="text-lg font-extrabold text-[#003C43]">Account</h2>
                     <p className="mt-3 break-all text-xs font-semibold text-[#365c60]">{user?.first_name} {user?.last_name}</p>
                     <p className="mt-2 break-all text-xs text-[#6d898b]">{user?.email}</p>
-                    <button type="button" onClick={onLogout} className="mt-6 rounded-xl border border-[#003C43]/15 px-4 py-3 text-xs font-bold text-[#135D66] transition hover:bg-[#E3FEF7]">Sign out</button>
+                    <button type="button" onClick={handleSignOut} className="mt-6 rounded-xl border border-[#003C43]/15 px-4 py-3 text-xs font-bold text-[#135D66] transition hover:bg-[#E3FEF7]">Sign out</button>
                   </section>
                   <section className="theme-surface rounded-2xl bg-white p-6 shadow-[0_8px_30px_rgba(0,60,67,0.06)] sm:p-7">
                     <h2 className="text-lg font-extrabold text-[#003C43]">Password &amp; security</h2>

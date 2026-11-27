@@ -1,6 +1,6 @@
-import { apiDownload, apiRequest } from "./apiClient";
+import { API_URL as DEFAULT_API_URL, apiDownload, apiRequest } from "./apiClient";
 
-const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "");
+const API_URL = (import.meta.env.VITE_API_URL || DEFAULT_API_URL).replace(/\/$/, "");
 
 export function getAdminDashboard() {
   return apiRequest("/api/admin/dashboard", {
@@ -135,6 +135,7 @@ export function subscribeToAdminAnalytics(onUpdate, onStatusChange) {
   let stopped = false;
   let retryCount = 0;
   let retryTimer = null;
+  let connectTimer = null;
   let socket = null;
 
   function scheduleReconnect() {
@@ -178,13 +179,27 @@ export function subscribeToAdminAnalytics(onUpdate, onStatusChange) {
     socket.onclose = () => scheduleReconnect();
   }
 
-  connect();
+  // Defer initial WebSocket creation past React StrictMode's synchronous cleanup.
+  connectTimer = window.setTimeout(() => {
+    connectTimer = null;
+    connect();
+  }, 0);
+
   return {
     isConnected: () => socket?.readyState === WebSocket.OPEN,
     close: () => {
       stopped = true;
+      if (connectTimer) window.clearTimeout(connectTimer);
       if (retryTimer) window.clearTimeout(retryTimer);
-      socket?.close(1000, "Dashboard closed");
+      if (!socket) return;
+      if (socket.readyState === WebSocket.CONNECTING) {
+        const pending = socket;
+        pending.onopen = () => pending.close(1000, "Dashboard closed");
+        pending.onerror = null;
+        pending.onclose = null;
+      } else {
+        socket.close(1000, "Dashboard closed");
+      }
     },
   };
 }
