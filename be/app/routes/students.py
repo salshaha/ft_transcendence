@@ -25,13 +25,22 @@ def index():
             student,
             search=request.args.get("search"),
             skill_id=request.args.get("skill_id"),
+            skill_ids=request.args.getlist("skill_id") + request.args.getlist("skill_ids"),
             skill=request.args.get("skill"),
             course_id=request.args.get("course_id"),
+            project_id=request.args.get("project_id"),
+            availability=request.args.get("availability"),
+            sort=request.args.get("sort", "name"),
+            order=request.args.get("order", "asc"),
             page=request.args.get("page", 1),
             per_page=request.args.get("per_page", 12),
         )
     except ValueError as exc:
         return _error(str(exc), 400)
+    except LookupError as exc:
+        return _error(str(exc), 404)
+    except PermissionError as exc:
+        return _error(str(exc), 403)
     except SQLAlchemyError:
         db.session.rollback()
         return _error("Unable to retrieve students", 500)

@@ -11,6 +11,7 @@ from app.services.communication_service import (
 )
 from app.services.student_service import (
     create_team,
+    delete_submission,
     get_authenticated_student,
     get_available_teams,
     get_course_project,
@@ -76,7 +77,21 @@ def courses():
         return response, status
     search = request.args.get("search", "").strip()
     try:
-        return jsonify({"courses": get_courses(student.id, search or None)}), 200
+        courses = get_courses(
+            student.id,
+            search or None,
+            semester=request.args.get("semester"),
+            academic_year=request.args.get("academic_year"),
+            instructor_id=request.args.get("instructor_id"),
+            sort=request.args.get("sort", "name"),
+            order=request.args.get("order", "asc"),
+            page=request.args.get("page", 1),
+            per_page=request.args.get("per_page", 12),
+            paginate=True,
+        )
+        return jsonify(courses), 200
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
     except SQLAlchemyError:
         return _database_error("Unable to retrieve courses")
 
@@ -107,10 +122,17 @@ def course_teams(course_id):
             project_id=request.args.get("project_id"),
             search=request.args.get("search"),
             availability=request.args.get("availability"),
+            sort=request.args.get("sort", "name"),
+            order=request.args.get("order", "asc"),
+            capacity=request.args.get("capacity", ""),
+            page=request.args.get("page", 1),
+            per_page=request.args.get("per_page", 12),
         )
         if data is None:
             return jsonify({"message": "Course or project not found"}), 404
         return jsonify(data), 200
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
     except SQLAlchemyError:
         return _database_error("Unable to retrieve course teams")
 
@@ -389,6 +411,24 @@ def submit_project_route(team_id):
         return jsonify({"message": "Unable to store the submission"}), 500
     except SQLAlchemyError:
         return _database_error("Unable to submit project")
+
+
+@student_bp.route("/teams/<int:team_id>/submission", methods=["DELETE"])
+def delete_submission_route(team_id):
+    student, response, status = _student_or_response()
+    if response:
+        return response, status
+    try:
+        result = delete_submission(student.id, team_id)
+        return jsonify(result), 200
+    except PermissionError as exc:
+        return jsonify({"message": str(exc)}), 403
+    except LookupError as exc:
+        return jsonify({"message": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except SQLAlchemyError:
+        return _database_error("Unable to delete submission")
 
 
 @student_bp.route("/teams/<int:team_id>/submission", methods=["GET"])

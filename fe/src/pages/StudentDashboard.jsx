@@ -1083,7 +1083,6 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
   const presence = usePresence()
   const [active, setActive] = useState("Overview")
   const [mobileOpen, setMobileOpen] = useState(false)
-  const [searchOpen, setSearchOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem("team-platform-theme") === "dark")
   const [dashboard, setDashboard] = useState(null)
@@ -1548,26 +1547,6 @@ export default function StudentDashboard({ onLogout, onRequestPasswordReset }) {
               </div>
             </div>
             <div className="ml-auto flex items-center gap-2 sm:gap-3">
-              <div
-                className={`${
-                  searchOpen ? "flex" : "hidden"
-                } theme-control absolute left-4 right-4 top-[82px] items-center rounded-xl border border-[#003C43]/10 bg-white px-3 shadow-xl sm:static sm:flex sm:w-60 sm:shadow-none`}
-              >
-                <Icon name="search" className="h-4 w-4 text-[#77B0AA]" />
-                <input
-                  aria-label="Search courses"
-                  className="w-full bg-transparent px-3 py-2.5 text-sm text-[#003C43] outline-none placeholder:text-[#7d999b]"
-                  placeholder="Search courses..."
-                  autoFocus={searchOpen}
-                />
-              </div>
-              <button
-                className="theme-control grid h-10 w-10 place-items-center rounded-xl border border-[#003C43]/10 bg-white text-[#135D66] sm:hidden"
-                onClick={() => setSearchOpen(!searchOpen)}
-                aria-label="Search"
-              >
-                <Icon name="search" className="h-[18px] w-[18px]" />
-              </button>
               <button
                 className="theme-control grid h-10 w-10 place-items-center rounded-xl border border-[#003C43]/10 bg-white text-[#135D66] transition hover:border-[#77B0AA] hover:bg-[#E3FEF7]"
                 onClick={() => setDarkMode(!darkMode)}

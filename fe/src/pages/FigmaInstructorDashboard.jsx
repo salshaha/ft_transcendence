@@ -421,8 +421,6 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
   const [data, setData] = useState(dashboard)
   const [active, setActive] = useState("Overview")
   const [mobileOpen, setMobileOpen] = useState(false)
-  const [searchOpen, setSearchOpen] = useState(false)
-  const [searchTerm, setSearchTerm] = useState("")
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem("team-platform-theme") === "dark")
   const [projectEditor, setProjectEditor] = useState(null)
@@ -469,16 +467,7 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
   const [kanbanTeams, setKanbanTeams] = useState([])
   const [loadingKanbanTeams, setLoadingKanbanTeams] = useState(false)
   const recentSubmissions = submissions?.items || []
-  const normalizedSearch = searchTerm.trim().toLowerCase()
-  const visibleStudents = students.filter((student) => {
-    if (!normalizedSearch) return true
-    const skills = (student.skills || []).map((skill) => skill.name || "").join(" ")
-    return [student.full_name, student.email, student.student_id, skills]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase()
-      .includes(normalizedSearch)
-  })
+  const visibleStudents = students
   const visibleProjects = projectCourseFilter === "all" ? projects : projects.filter((project) => String(project.course?.id) === projectCourseFilter)
   const availableFormCourses = formCourses.filter((course) => !(course.project_ids?.length || course.projects?.length))
   const selectedCourseProjects = projectsForCourse(selectedCourse)
@@ -486,12 +475,7 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
     if (taskCourseFilter !== "all" && String(task.course?.id) !== taskCourseFilter) return false
     if (taskProjectFilter !== "all" && String(task.project?.id) !== taskProjectFilter) return false
     if (taskStatusFilter !== "all" && task.status !== taskStatusFilter) return false
-    if (!normalizedSearch) return true
-    return [task.title, task.course?.name, task.project?.title, task.team?.name, task.assignee?.name]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase()
-      .includes(normalizedSearch)
+    return true
   })
 
   function describeRequestError(error, fallback) {
@@ -925,27 +909,6 @@ export default function FigmaInstructorDashboard({ dashboard, onLogout, onReques
               </div>
             </div>
             <div className="ml-auto flex items-center gap-2 sm:gap-3">
-              <div
-                className={`${
-                  searchOpen ? "flex" : "hidden"
-                } theme-control absolute left-4 right-4 top-[82px] items-center rounded-xl border border-[#003C43]/10 bg-white px-3 shadow-xl sm:static sm:flex sm:w-60 sm:shadow-none`}
-              >
-                <Icon name="search" className="h-4 w-4 text-[#77B0AA]" />
-                <input
-                  className="w-full bg-transparent px-3 py-2.5 text-sm text-[#003C43] outline-none placeholder:text-[#7d999b]"
-                  placeholder="Search courses, students, tasks..."
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  autoFocus={searchOpen}
-                />
-              </div>
-              <button
-                className="theme-control grid h-10 w-10 place-items-center rounded-xl border border-[#003C43]/10 bg-white text-[#135D66] sm:hidden"
-                onClick={() => setSearchOpen(!searchOpen)}
-                aria-label="Search"
-              >
-                <Icon name="search" className="h-[18px] w-[18px]" />
-              </button>
               <button
                 className="theme-control grid h-10 w-10 place-items-center rounded-xl border border-[#003C43]/10 bg-white text-[#135D66] transition hover:border-[#77B0AA] hover:bg-[#E3FEF7]"
                 onClick={() => setDarkMode(!darkMode)}
