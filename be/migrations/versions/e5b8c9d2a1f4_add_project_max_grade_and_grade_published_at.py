@@ -7,24 +7,33 @@ branch_labels = None
 depends_on = None
 
 
+def _column_names(table):
+    return {
+        column["name"]
+        for column in sa.inspect(op.get_bind()).get_columns(table)
+    }
+
+
 def upgrade():
-    with op.batch_alter_table("projects", schema=None) as batch_op:
-        batch_op.add_column(
-            sa.Column(
-                "max_grade",
-                sa.Numeric(precision=5, scale=2),
-                nullable=False,
-                server_default=sa.text("100"),
+    if "max_grade" not in _column_names("projects"):
+        with op.batch_alter_table("projects", schema=None) as batch_op:
+            batch_op.add_column(
+                sa.Column(
+                    "max_grade",
+                    sa.Numeric(precision=5, scale=2),
+                    nullable=False,
+                    server_default=sa.text("100"),
+                )
             )
-        )
-    with op.batch_alter_table("grades", schema=None) as batch_op:
-        batch_op.add_column(
-            sa.Column(
-                "published_at",
-                sa.DateTime(timezone=True),
-                nullable=True,
+    if "published_at" not in _column_names("grades"):
+        with op.batch_alter_table("grades", schema=None) as batch_op:
+            batch_op.add_column(
+                sa.Column(
+                    "published_at",
+                    sa.DateTime(timezone=True),
+                    nullable=True,
+                )
             )
-        )
 
 
 def downgrade():

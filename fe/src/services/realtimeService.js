@@ -26,6 +26,11 @@ const connectionHandlers = new Set();
 let socket = null;
 let connected = false;
 let lastError = "";
+let disconnectPending = false;
+
+function cancelPendingDisconnect() {
+  disconnectPending = false;
+}
 
 function notifyConnection() {
   connectionHandlers.forEach((handler) => {
@@ -58,6 +63,7 @@ function dispatchEvent(event, payload) {
 }
 
 function ensureSocket() {
+  cancelPendingDisconnect();
   if (socket) return socket;
 
   socket = io(REALTIME_URL, {
@@ -103,10 +109,20 @@ function ensureSocket() {
 
 function maybeDisconnect() {
   if (teamSubscriptions.size === 0 && eventSubscriptions.size === 0 && socket) {
-    socket.disconnect();
-    socket = null;
-    connected = false;
-    notifyConnection();
+    if (disconnectPending) return;
+    disconnectPending = true;
+    // Defer teardown to a microtask so React StrictMode remounts reuse the
+    // active socket instead of aborting an in-flight WebSocket handshake.
+    queueMicrotask(() => {
+      if (!disconnectPending) return;
+      disconnectPending = false;
+      if (teamSubscriptions.size === 0 && eventSubscriptions.size === 0 && socket) {
+        socket.disconnect();
+        socket = null;
+        connected = false;
+        notifyConnection();
+      }
+    });
   }
 }
 
