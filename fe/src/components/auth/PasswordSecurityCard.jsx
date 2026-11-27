@@ -20,8 +20,8 @@ export default function PasswordSecurityCard({ email, onRequestPasswordReset }) 
         Password &amp; security
       </h2>
       <p className="mt-2 text-xs leading-5 text-[#6d898b]">
-        Request a one-time token to choose a new password for your account.
-        Tokens expire after one hour and can be used once.
+        Request a password reset link by email to choose a new password for your
+        account. Links expire after one hour and can only be used once.
       </p>
       {email && (
         <p className="mt-3 break-all text-[11px] font-semibold text-[#587376]">

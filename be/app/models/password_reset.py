@@ -3,7 +3,10 @@ from app.extensions import db
 
 class PasswordResetToken(db.Model):
     __tablename__ = "password_reset_tokens"
-    __table_args__ = (db.Index("idx_password_reset_user", "user_id"),)
+    __table_args__ = (
+        db.Index("idx_password_reset_user", "user_id"),
+        db.Index("idx_password_reset_expires_at", "expires_at"),
+    )
 
     id = db.Column(db.BigInteger, primary_key=True)
     user_id = db.Column(

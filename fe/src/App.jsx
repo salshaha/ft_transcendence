@@ -61,11 +61,7 @@ export default function App() {
 
   async function handlePasswordResetSuccess() {
     if (user) {
-      try {
-        await logoutUser();
-      } catch (requestError) {
-        setError(requestError.message);
-      }
+      await logoutUser().catch(() => {});
       setUser(null);
     }
     setNotice("Your password has been reset. Sign in with your new password.");
@@ -94,9 +90,6 @@ export default function App() {
           <ForgotPassword
             initialEmail={email}
             onBackToLogin={showLogin}
-            onTokenReady={(resetToken, address) =>
-              navigate("reset-password", { token: resetToken, email: address, replace: true })
-            }
           />
         ) : (
           <ResetPassword

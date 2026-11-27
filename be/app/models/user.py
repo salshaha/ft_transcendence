@@ -31,6 +31,9 @@ class User(db.Model):
     joined_year = db.Column(db.Integer)
     email = db.Column(db.String(255), nullable=False, unique=True)
     password_hash = db.Column(db.Text)
+    session_version = db.Column(
+        db.Integer, nullable=False, default=1, server_default="1"
+    )
     profile_picture = db.Column(db.Text)
     role = db.Column(db.String(20), nullable=False)
     student_id = db.Column(db.String(50), unique=True)

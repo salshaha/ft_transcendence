@@ -15,10 +15,11 @@ The authenticated user returned by login selects the dashboard: `student` render
 | Student courses | `GET /api/student/courses` | Enrolled course and instructor data. |
 | Join a team | `POST /api/student/teams/<id>/join` | Uses the existing membership validation and refreshes the dashboard after success. |
 | Change student email | `PUT /api/update_info` | Updates the account email after the current password is entered. Phone is not shown because the schema has no phone field. |
+| Forgot / reset password | `POST /api/auth/forgot-password`, `POST /api/auth/reset-password/validate`, `POST /api/auth/reset-password` | Sends a Resend password-reset link by email, validates the link token, and resets the password with confirmation and visibility controls. |
 | Restore a signed-in session after refresh | `GET /api/auth/session` | Called on app load to restore the authenticated user and CSRF token. |
 | CSRF protection | `GET /api/auth/csrf` | Every state-changing request sends the returned token in `X-CSRF-Token`; the API client bootstraps and retries it automatically. |
 
-Empty lists and unsupported capabilities are shown explicitly. Figma sample names, courses, team memberships, dates, grades, and success states are not used as application data. The student settings page does not claim that a password-reset email was sent, and unsupported actions are disabled.
+Empty lists and unsupported capabilities are shown explicitly. Figma sample names, courses, team memberships, dates, grades, and success states are not used as application data. Unsupported actions remain disabled.
 
 ## Backend functionality still needed
 
@@ -32,9 +33,8 @@ The foundational backend phase added migrations, task authorization, CSRF protec
 | Create a team | Students can list and join teams, but there is no team-creation endpoint. | Add an enrollment- and project-scoped team creation endpoint; create its initial membership transactionally and enforce the existing team-size rules. |
 | Student skills | `skills` and `student_skills` exist in the schema, but there are no read/write endpoints. | Add authenticated profile skill list, add, and remove endpoints that reuse those tables and validate proficiency values. |
 | GPA and individual project grading/feedback | `student_gpa` now stores an optional GPA and the student profile returns it, but there is no GPA-management endpoint, submission table, or individual evaluation table/API. Team feedback alone does not represent individual grades. | Confirm the authoritative GPA source and grading workflow first. Then add suitable evaluation records and APIs, plus instructor read/write endpoints. |
-| Password reset | There is no reset-token workflow or outbound email configuration. | Add expiring, single-use reset tokens stored as hashes, request/confirmation endpoints, and configured email delivery. |
 | Notifications | There is no notification table or API. | Add recipient-scoped notification storage, read state, and list/mark-read endpoints when notification events are defined. |
 | Classmate profiles and course materials | Course API responses do not include classmates or resources. | Extend or add enrollment-scoped endpoints after the resource API and profile visibility rules are defined. |
 | Editable phone/personal fields | The current schema has no phone column; the update endpoint accepts email and password only. | Confirm which fields may be edited and add a migration only for approved persistent fields. |
 
-These are follow-up items, not claims that the current UI implements those features. Password reset, resources, project creation, skills, and team creation should be added in a separate backend-focused phase with migrations and API tests.
+These are follow-up items, not claims that the current UI implements those features. Resources, project creation, skills, and team creation should be added in a separate backend-focused phase with migrations and API tests.

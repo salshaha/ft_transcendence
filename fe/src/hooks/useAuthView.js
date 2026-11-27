@@ -7,7 +7,14 @@ function readLocation() {
     return { view: "login", token: "", email: "" };
   }
   const params = new URLSearchParams(window.location.search);
-  const requestedView = params.get("view");
+  const pathname = window.location.pathname.replace(/\/+$/, "");
+  const pathView =
+    pathname === "/forgot-password"
+      ? "forgot-password"
+      : pathname === "/reset-password"
+        ? "reset-password"
+        : null;
+  const requestedView = pathView || params.get("view");
   return {
     view: AUTH_VIEWS.has(requestedView) ? requestedView : "login",
     token: params.get("token") || "",
@@ -33,11 +40,11 @@ export function useAuthView() {
       email: email || "",
     };
     const params = new URLSearchParams();
-    if (next.view !== "login") params.set("view", next.view);
     if (next.token) params.set("token", next.token);
     if (next.email) params.set("email", next.email);
+    const pathname = next.view === "login" ? "/" : `/${next.view}`;
     const query = params.toString();
-    const url = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+    const url = `${pathname}${query ? `?${query}` : ""}${window.location.hash}`;
     window.history[replace ? "replaceState" : "pushState"]({}, "", url);
     setLocation(next);
   }, []);

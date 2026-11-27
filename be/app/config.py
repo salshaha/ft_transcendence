@@ -39,7 +39,7 @@ def load_vault_secrets():
         "POSTGRES_USER",
         "POSTGRES_PASSWORD",
     }
-    allowed_keys = required_keys | {"MICROSOFT_CLIENT_SECRET"}
+    allowed_keys = required_keys | {"MICROSOFT_CLIENT_SECRET", "RESEND_API_KEY"}
     if not isinstance(secret_data, dict):
         raise RuntimeError(
             "Vault backend secret data must be a key/value object"
@@ -96,11 +96,29 @@ else:
             "when Vault is not enabled"
         )
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:8080")
+FRONTEND_URL = (
+    os.getenv("FRONTEND_URL") or FRONTEND_ORIGIN
+).strip().rstrip("/")
 FRONTEND_ORIGINS = [
     origin.strip()
     for origin in os.getenv("FRONTEND_ORIGINS", FRONTEND_ORIGIN).split(",")
     if origin.strip()
 ]
+
+RESEND_API_KEY = VAULT_SECRETS.get(
+    "RESEND_API_KEY",
+    "" if VAULT_AGENT_ADDR else os.getenv("RESEND_API_KEY", ""),
+).strip()
+EMAIL_FROM = os.getenv("EMAIL_FROM", "").strip()
+PASSWORD_RESET_TOKEN_EXPIRY_MINUTES = max(
+    5, env_int("PASSWORD_RESET_TOKEN_EXPIRY_MINUTES", 60)
+)
+PASSWORD_RESET_REQUEST_LIMIT = os.getenv(
+    "PASSWORD_RESET_REQUEST_LIMIT", "5 per hour"
+).strip()
+PASSWORD_RESET_CONFIRM_LIMIT = os.getenv(
+    "PASSWORD_RESET_CONFIRM_LIMIT", "10 per hour"
+).strip()
 
 # In Compose, Flask reaches PostgreSQL through the private service network.
 DATABASE_URL = None if VAULT_AGENT_ADDR else os.getenv("DATABASE_URL")

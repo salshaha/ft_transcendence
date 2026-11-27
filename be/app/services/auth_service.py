@@ -21,6 +21,15 @@ def get_authenticated_user(allowed_roles=None):
         rotate_csrf_token()
         return None, ("Authenticated user was not found", 401)
 
+    current_version = int(user.session_version or 1)
+    session_version = session.get("session_version")
+    if (
+        session_version is not None and int(session_version) != current_version
+    ) or (session_version is None and current_version > 1):
+        session.clear()
+        rotate_csrf_token()
+        return None, ("Session has expired. Please sign in again.", 401)
+
     if allowed_roles is not None and user.role not in set(allowed_roles):
         return None, ("You do not have permission to perform this action", 403)
 
@@ -33,6 +42,7 @@ def start_user_session(user):
     session.permanent = True
     session["user_id"] = user.id
     session["email"] = user.email
+    session["session_version"] = int(user.session_version or 1)
     return rotate_csrf_token()
 
 

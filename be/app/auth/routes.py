@@ -1,14 +1,9 @@
-import hashlib
-import secrets
-from datetime import datetime, timedelta, timezone
-
 from flask import Blueprint, current_app, jsonify, redirect, request, session
 import requests
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from werkzeug.security import check_password_hash
 
 from app.extensions import db
-from app.models.password_reset import PasswordResetToken
 from app.models.user import User
 from app.security.csrf import get_csrf_token
 from app.security.rate_limit import limiter, get_remote_address
@@ -18,11 +13,22 @@ from app.services.auth_service import (
     serialize_session_user,
     start_user_session,
 )
+from app.services.email_service import (
+    EmailConfigurationError,
+    EmailDeliveryError,
+)
+from app.services.password_reset_service import (
+    InvalidResetTokenError,
+    PasswordResetStorageError,
+    PasswordResetValidationError,
+    confirm_password_reset as complete_password_reset,
+    request_password_reset as initiate_password_reset,
+    validate_reset_token,
+)
 from app.services.user_service import (
     UserConflictError,
     UserValidationError,
     create_user,
-    set_password,
 )
 from app.services.microsoft_identity import (
     MicrosoftIdentityError,
@@ -32,7 +38,7 @@ from app.services.microsoft_identity import (
     save_token_cache,
     start_auth_flow,
 )
-from app.utils.validation import normalize_email, validate_password
+from app.utils.validation import normalize_email
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -280,41 +286,56 @@ def logout():
     }), 200
 
 
+@auth_bp.route("/forgot-password", methods=["POST"])
 @auth_bp.route("/password-reset/request", methods=["POST"])
-@limiter.limit("3 per hour", key_func=get_remote_address)
+@limiter.limit(
+    lambda: current_app.config.get("PASSWORD_RESET_REQUEST_LIMIT", "5 per hour"),
+    key_func=get_remote_address,
+)
 def request_password_reset():
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
-        data = {}
-    email = normalize_email(data.get("email"))
-    response = {"message": "If the account exists, a reset token has been issued."}
-    if not email:
-        return jsonify(response), 200
+        return jsonify({"message": "A JSON object is required"}), 400
 
-    user = User.query.filter_by(email=email).first()
-    if user is None or not user.password_hash:
-        return jsonify(response), 200
-
-    raw_token = secrets.token_urlsafe(32)
-    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
-    reset = PasswordResetToken(
-        user_id=user.id,
-        token_hash=token_hash,
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
-    )
-    db.session.add(reset)
     try:
-        db.session.commit()
-    except SQLAlchemyError:
-        db.session.rollback()
-        return jsonify({"message": "Unable to issue reset token"}), 500
+        message = initiate_password_reset(data.get("email"))
+    except PasswordResetValidationError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except EmailConfigurationError:
+        return jsonify({
+            "message": "Password reset email service is currently unavailable. Please try again later."
+        }), 503
+    except EmailDeliveryError:
+        return jsonify({
+            "message": "Unable to send password reset email right now. Please try again later."
+        }), 503
+    except PasswordResetStorageError:
+        return jsonify({"message": "Unable to process password reset request"}), 500
 
-    response["reset_token"] = raw_token
-    return jsonify(response), 200
+    return jsonify({"message": message}), 200
 
 
+@auth_bp.route("/reset-password/validate", methods=["POST"])
+@auth_bp.route("/password-reset/validate", methods=["POST"])
+@limiter.limit("20 per hour", key_func=get_remote_address)
+def validate_password_reset_token():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"valid": False, "message": "A JSON object is required"}), 400
+
+    is_valid, error_message = validate_reset_token(data.get("token"))
+    if not is_valid:
+        return jsonify({"valid": False, "message": error_message}), 400
+
+    return jsonify({"valid": True, "message": "Reset token is valid"}), 200
+
+
+@auth_bp.route("/reset-password", methods=["POST"])
 @auth_bp.route("/password-reset/confirm", methods=["POST"])
-@limiter.limit("5 per hour", key_func=get_remote_address)
+@limiter.limit(
+    lambda: current_app.config.get("PASSWORD_RESET_CONFIRM_LIMIT", "10 per hour"),
+    key_func=get_remote_address,
+)
 def confirm_password_reset():
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -322,35 +343,31 @@ def confirm_password_reset():
 
     raw_token = data.get("token")
     new_password = data.get("new_password", data.get("password"))
-    if not isinstance(raw_token, str) or not raw_token:
-        return jsonify({"message": "Reset token is required"}), 400
-
-    password_error = validate_password(new_password)
-    if password_error:
-        return jsonify({"message": password_error}), 400
-
-    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
-    reset = PasswordResetToken.query.filter_by(token_hash=token_hash).first()
-    if (
-        reset is None
-        or reset.used_at is not None
-        or reset.expires_at < datetime.now(timezone.utc)
-    ):
-        return jsonify({"message": "Invalid or expired reset token"}), 400
-
-    user = db.session.get(User, reset.user_id)
-    if user is None:
-        return jsonify({"message": "Invalid or expired reset token"}), 400
+    confirm_password = data.get("confirm_password")
+    if confirm_password is not None and confirm_password != new_password:
+        return jsonify({"message": "Passwords do not match"}), 400
 
     try:
-        set_password(user, new_password)
-        reset.used_at = datetime.now(timezone.utc)
-        db.session.commit()
-    except (UserValidationError, SQLAlchemyError):
-        db.session.rollback()
-        return jsonify({"message": "Unable to reset password"}), 400
+        user = complete_password_reset(
+            raw_token=raw_token,
+            new_password=new_password,
+        )
+    except PasswordResetValidationError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except InvalidResetTokenError as exc:
+        return jsonify({"message": str(exc)}), 400
+    except PasswordResetStorageError:
+        return jsonify({"message": "Unable to reset password"}), 500
 
-    return jsonify({"message": "Password reset successfully"}), 200
+    if session.get("user_id") == user.id:
+        csrf_token = clear_user_session()
+    else:
+        csrf_token = get_csrf_token()
+
+    return jsonify({
+        "message": "Password reset successfully",
+        "csrf_token": csrf_token,
+    }), 200
 
 
 import os

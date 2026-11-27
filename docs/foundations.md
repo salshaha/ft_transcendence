@@ -162,6 +162,9 @@ MAX_CONTENT_LENGTH_BYTES=115343360
 ## Password reset
 
 Changing a password while signed in is covered by `PUT /api/update_info`.
-Forgotten-password reset still requires an expiring, single-use token workflow
-and outbound email configuration. That is intentionally a later feature and is
-not faked by the current UI.
+Forgotten-password recovery is implemented with Resend transactional email
+delivery (`POST /api/auth/forgot-password`, `POST /api/auth/reset-password/validate`,
+and `POST /api/auth/reset-password`, with `/api/auth/password-reset/*` aliases),
+SHA-256 hashed expiring single-use tokens in `password_reset_tokens`, and
+`users.session_version` invalidation across active sessions. See
+[docs/password-recovery.md](password-recovery.md) for setup and API details.

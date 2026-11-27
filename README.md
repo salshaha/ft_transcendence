@@ -391,7 +391,8 @@ STORAGE_MAX_PROJECT_SUBMISSION_BYTES=104857600
 ```
 
 See `docs/foundations.md` for the authorization, CSRF, role-provisioning, and
-file-storage decisions.
+file-storage decisions, and `docs/password-recovery.md` for Resend email
+configuration, password-reset endpoints, security policy, and troubleshooting.
 
 ## Microsoft sign-in and course roster sync
 
@@ -758,7 +759,8 @@ Expected JSON shape:
   "POSTGRES_DB": "team_platform",
   "POSTGRES_USER": "postgres",
   "POSTGRES_PASSWORD": "<same-value-as-postgres-password-file>",
-  "MICROSOFT_CLIENT_SECRET": "<omit-if-not-used>"
+  "MICROSOFT_CLIENT_SECRET": "<omit-if-not-used>",
+  "RESEND_API_KEY": "<omit-if-not-used>"
 }
 ```
 
