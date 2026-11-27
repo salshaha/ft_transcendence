@@ -238,6 +238,8 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
   const [dataMessage, setDataMessage] = useState("");
   const [liveStatus, setLiveStatus] = useState("connecting");
   const refreshRef = useRef(null);
+  const analyticsConnectionRef = useRef(null);
+  const loggingOutRef = useRef(false);
 
   // Users
   const [users, setUsers] = useState([]);
@@ -403,13 +405,18 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
 
   // Analytics
   const refresh = useCallback(async (showLoading = false) => {
+    if (loggingOutRef.current) return;
     if (showLoading) setAnalyticsLoading(true);
     try {
       const next = await getAdminAnalytics(range);
-      setAnalyticsData(next);
-      setAnalyticsError("");
+      if (!loggingOutRef.current) {
+        setAnalyticsData(next);
+        setAnalyticsError("");
+      }
     } catch (requestError) {
-      setAnalyticsError(requestError.message);
+      if (!loggingOutRef.current) {
+        setAnalyticsError(requestError.message);
+      }
     } finally {
       if (showLoading) setAnalyticsLoading(false);
     }
@@ -427,17 +434,37 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
   useEffect(() => {
     if (active !== "analytics") return;
     const connection = subscribeToAdminAnalytics(
-      () => refreshRef.current?.(),
+      () => {
+        if (!loggingOutRef.current) refreshRef.current?.();
+      },
       setLiveStatus,
     );
+    analyticsConnectionRef.current = connection;
     const fallbackTimer = window.setInterval(() => {
-      if (!connection.isConnected()) refreshRef.current?.();
+      if (!loggingOutRef.current && !connection.isConnected()) {
+        refreshRef.current?.();
+      }
     }, 30000);
     return () => {
       window.clearInterval(fallbackTimer);
+      if (analyticsConnectionRef.current === connection) {
+        analyticsConnectionRef.current = null;
+      }
       connection.close();
     };
   }, [active]);
+
+  async function handleSignOut() {
+    loggingOutRef.current = true;
+    analyticsConnectionRef.current?.close();
+    analyticsConnectionRef.current = null;
+    try {
+      await onLogout?.();
+    } catch (error) {
+      loggingOutRef.current = false;
+      throw error;
+    }
+  }
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
@@ -695,7 +722,7 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
                 <div className="truncate text-sm font-semibold">{user?.full_name || `${user?.first_name} ${user?.last_name}`}</div>
                 <div className="truncate text-[11px] text-white/50">{user?.email}</div>
               </div>
-              <button className={`rounded-lg p-1.5 text-white/50 transition hover:bg-white/10 hover:text-white ${sidebarCollapsed ? "lg:hidden" : ""}`} aria-label="Sign out" onClick={onLogout}>
+              <button className={`rounded-lg p-1.5 text-white/50 transition hover:bg-white/10 hover:text-white ${sidebarCollapsed ? "lg:hidden" : ""}`} aria-label="Sign out" onClick={handleSignOut}>
                 <Icon name="logout" className="h-4 w-4" />
               </button>
             </div>
@@ -1050,7 +1077,7 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
               <>
                 <header className="mb-8 flex flex-wrap items-start justify-between gap-4">
                   <div><p className="mb-2 text-xs font-bold uppercase tracking-[.18em] text-[#4f8980]">Platform overview</p><h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Analytics dashboard</h1><p className="mt-2 text-sm text-[#718b85]">Platform activity, engagement, and key metrics at a glance.</p></div>
-                  <button onClick={onLogout} className="rounded-xl border border-[#d8e5e1] bg-white px-4 py-2.5 text-sm font-semibold text-[#41615b] hover:bg-[#f8fbfa]">Sign out</button>
+                  <button onClick={handleSignOut} className="rounded-xl border border-[#d8e5e1] bg-white px-4 py-2.5 text-sm font-semibold text-[#41615b] hover:bg-[#f8fbfa]">Sign out</button>
                 </header>
                 {statsError && <p className="mb-5 rounded-xl border border-[#f0d2d2] bg-white p-4 text-sm text-[#a94646]" role="alert">{statsError}</p>}
                 {statsLoading ? <p className="py-10 text-center text-sm text-[#718b85]" role="status">Loading stats…</p> : (
@@ -1144,7 +1171,7 @@ export default function AdminDashboard({ user, onLogout, onRequestPasswordReset 
                     <h2 className="text-lg font-extrabold text-[#003C43]">Account</h2>
                     <p className="mt-3 break-all text-xs font-semibold text-[#365c60]">{user?.first_name} {user?.last_name}</p>
                     <p className="mt-2 break-all text-xs text-[#6d898b]">{user?.email}</p>
-                    <button type="button" onClick={onLogout} className="mt-6 rounded-xl border border-[#003C43]/15 px-4 py-3 text-xs font-bold text-[#135D66] transition hover:bg-[#E3FEF7]">Sign out</button>
+                    <button type="button" onClick={handleSignOut} className="mt-6 rounded-xl border border-[#003C43]/15 px-4 py-3 text-xs font-bold text-[#135D66] transition hover:bg-[#E3FEF7]">Sign out</button>
                   </section>
                   <section className="theme-surface rounded-2xl bg-white p-6 shadow-[0_8px_30px_rgba(0,60,67,0.06)] sm:p-7">
                     <h2 className="text-lg font-extrabold text-[#003C43]">Password &amp; security</h2>

@@ -29,6 +29,7 @@ import {
   getAdminCourses,
   getAdminDashboard,
   getAdminUsers,
+  subscribeToAdminAnalytics,
   updateAdminUser,
 } from "../services/adminService";
 
@@ -48,8 +49,12 @@ describe("AdminDashboard course creation validation", () => {
     getAdminAnalytics.mockResolvedValue({
       start_date: "2026-11-01",
       end_date: "2026-11-27",
-      totals: { users: 10, teams: 1, tasks: 1, submissions: 0, activity_events: 1 },
-      timeline: [],
+      period: { users: 10, teams: 1, tasks: 1, submissions: 0 },
+      activity_count: 1,
+      user_roles: [{ role: "student", count: 8 }],
+      task_statuses: [{ status: "todo", count: 1 }],
+      timeline: [{ date: "2026-11-27", users: 1, teams: 1, tasks: 1, submissions: 0, activity_events: 1 }],
+      monthly_activity: [],
       recent_activity: [],
     });
     getAdminCourses.mockResolvedValue({
@@ -167,5 +172,30 @@ describe("AdminDashboard course creation validation", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Cannot change role");
     expect(updateAdminUser).not.toHaveBeenCalled();
+  });
+
+  it("closes analytics WebSocket and suppresses refreshes during sign out", async () => {
+    let onUpdateCallback = null;
+    const closeSpy = vi.fn();
+    subscribeToAdminAnalytics.mockImplementation((onUpdate) => {
+      onUpdateCallback = onUpdate;
+      return { close: closeSpy, isConnected: () => true };
+    });
+
+    const onLogout = vi.fn(() => {
+      onUpdateCallback?.();
+      return Promise.resolve();
+    });
+
+    render(<AdminDashboard user={{ id: 1, first_name: "Admin", email: "admin@example.com" }} onLogout={onLogout} />);
+
+    await waitFor(() => expect(getAdminAnalytics).toHaveBeenCalled());
+    getAdminAnalytics.mockClear();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Sign out" })[0]);
+
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+    expect(onLogout).toHaveBeenCalledTimes(1);
+    expect(getAdminAnalytics).not.toHaveBeenCalled();
   });
 });
