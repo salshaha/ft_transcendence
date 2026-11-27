@@ -4,7 +4,6 @@ import ResetPassword from "./pages/ResetPassword";
 import InstructorDashboard from "./pages/InstructorDashboard";
 import StudentDashboard from "./pages/StudentDashboard";
 import AdminDashboard from "./pages/AdminDashboard";
-import AdminSettings from "./pages/AdminSettings";
 import { getSession, logoutUser } from "./services/authService";
 import { useEffect, useState } from "react";
 import { useAuthView } from "./hooks/useAuthView";
@@ -130,7 +129,7 @@ export default function App() {
     return (
       <>
         {toast}
-        <AdminSettings
+        <AdminDashboard
           user={user}
           onLogout={handleLogout}
           onRequestPasswordReset={showForgotPassword}
