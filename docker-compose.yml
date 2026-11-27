@@ -25,16 +25,11 @@ services:
       - .env
 
     environment:
-      DATABASE_URL: ""
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
-      STORAGE_ROOT: /app/uploads
       FRONTEND_ORIGIN: ${WAF_PUBLIC_ORIGIN:-http://localhost:8080}
       FRONTEND_ORIGINS: ${WAF_PUBLIC_ORIGIN:-http://localhost:8080}
       MICROSOFT_REDIRECT_URI: ${WAF_PUBLIC_ORIGIN:-http://localhost:8080}/auth/microsoft/callback
-
-    volumes:
-      - ./be/uploads:/app/uploads
 
     depends_on:
       - postgres
